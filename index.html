@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DDL 助手</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <h1>DDL 助手</h1>
+            <p id="todayText"></p>
+          </div>
+          <div class="summary" aria-label="任务统计">
+            <span><strong id="totalCount">0</strong> 全部</span>
+            <span><strong id="openCount">0</strong> 未完成</span>
+          </div>
+        </header>
+
+        <section class="input-panel" aria-label="任务输入">
+          <label for="pasteInput">粘贴 Excel 表格内容或普通文字</label>
+          <textarea
+            id="pasteInput"
+            rows="7"
+            placeholder="示例：&#10;提交周报 2026-06-08&#10;项目复盘	6/12/2026	张三&#10;6月15日 完成合同审核"
+          ></textarea>
+          <div class="input-actions">
+            <button id="addBtn" type="button">添加任务</button>
+            <button id="clearInputBtn" type="button" class="secondary">清空输入</button>
+          </div>
+        </section>
+
+        <section class="toolbar" aria-label="任务工具">
+          <div class="filter-group" role="group" aria-label="任务筛选">
+            <button class="filter active" type="button" data-filter="all">全部</button>
+            <button class="filter" type="button" data-filter="open">未完成</button>
+            <button class="filter" type="button" data-filter="done">已完成</button>
+          </div>
+          <button id="clearDoneBtn" type="button" class="secondary">清除已完成</button>
+        </section>
+
+        <section class="task-board" aria-label="DDL 任务列表">
+          <section class="task-section" data-section="today">
+            <div class="section-heading">
+              <h2>今日到期</h2>
+              <span id="todayCount">0</span>
+            </div>
+            <div id="todayList" class="task-list"></div>
+          </section>
+
+          <section class="task-section" data-section="week">
+            <div class="section-heading">
+              <h2>本周到期</h2>
+              <span id="weekCount">0</span>
+            </div>
+            <div id="weekList" class="task-list"></div>
+          </section>
+
+          <section class="task-section" data-section="future">
+            <div class="section-heading">
+              <h2>未来任务</h2>
+              <span id="futureCount">0</span>
+            </div>
+            <div id="futureList" class="task-list"></div>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <template id="emptyTemplate">
+      <div class="empty-state">暂无任务</div>
+    </template>
+
+    <script src="app.js"></script>
+  </body>
+</html>
