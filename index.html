@@ -3,75 +3,121 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>DDL 助手</title>
+    <meta name="theme-color" content="#176f6b">
+    <meta name="description" content="记录优先的工作便签本与 DDL 辅助提醒">
+    <title>工作便签本</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="style.css">
   </head>
   <body>
-    <main class="app-shell">
-      <section class="workspace">
-        <header class="topbar">
+    <main class="workspace">
+      <section class="note-pane" aria-labelledby="appTitle">
+        <header class="note-header">
           <div>
-            <h1>DDL 助手</h1>
+            <h1 id="appTitle">工作便签本</h1>
             <p id="todayText"></p>
           </div>
-          <div class="summary" aria-label="任务统计">
-            <span><strong id="totalCount">0</strong> 全部</span>
-            <span><strong id="openCount">0</strong> 未完成</span>
+          <div class="note-actions">
+            <button id="previousWeekBtn" class="text-button" type="button">查看上周随记</button>
+            <span id="saveStatus" class="save-status" aria-live="polite">已保存</span>
           </div>
         </header>
 
-        <section class="input-panel" aria-label="任务输入">
-          <label for="pasteInput">粘贴 Excel 表格内容或普通文字</label>
+        <textarea
+          id="workspaceNote"
+          aria-label="本周工作随记"
+          placeholder="写下工作内容。日期会被自动识别，例如：明天下午开会"
+          autofocus
+          spellcheck="false"
+        ></textarea>
+
+        <details class="long-term-panel">
+          <summary>
+            <span>长线项目与商务节点备忘</span>
+            <span>常驻</span>
+          </summary>
           <textarea
-            id="pasteInput"
-            rows="7"
-            placeholder="示例：&#10;提交周报 2026-06-08&#10;项目复盘	6/12/2026	张三&#10;6月15日 完成合同审核"
+            id="longTermNote"
+            aria-label="长线项目与商务节点备忘"
+            placeholder="记录跨周项目节点、续约日期、回款安排等长期信息"
+            spellcheck="false"
           ></textarea>
-          <div class="input-actions">
-            <button id="addBtn" type="button">添加任务</button>
-            <button id="clearInputBtn" type="button" class="secondary">清空输入</button>
-          </div>
-        </section>
+        </details>
 
-        <section class="toolbar" aria-label="任务工具">
-          <div class="filter-group" role="group" aria-label="任务筛选">
-            <button class="filter active" type="button" data-filter="all">全部</button>
-            <button class="filter" type="button" data-filter="open">未完成</button>
-            <button class="filter" type="button" data-filter="done">已完成</button>
-          </div>
-          <button id="clearDoneBtn" type="button" class="secondary">清除已完成</button>
-        </section>
-
-        <section class="task-board" aria-label="DDL 任务列表">
-          <section class="task-section" data-section="today">
-            <div class="section-heading">
-              <h2>今日到期</h2>
-              <span id="todayCount">0</span>
-            </div>
-            <div id="todayList" class="task-list"></div>
-          </section>
-
-          <section class="task-section" data-section="week">
-            <div class="section-heading">
-              <h2>本周到期</h2>
-              <span id="weekCount">0</span>
-            </div>
-            <div id="weekList" class="task-list"></div>
-          </section>
-
-          <section class="task-section" data-section="future">
-            <div class="section-heading">
-              <h2>未来任务</h2>
-              <span id="futureCount">0</span>
-            </div>
-            <div id="futureList" class="task-list"></div>
-          </section>
-        </section>
+        <footer class="note-footer">
+          <span id="weekLabel"></span>
+          <span>自动保存</span>
+        </footer>
       </section>
+
+      <aside class="ddl-sidebar" aria-labelledby="ddlTitle">
+        <header class="sidebar-header">
+          <div>
+            <h2 id="ddlTitle">DDL 提醒</h2>
+            <p>从随记中静默提取</p>
+          </div>
+          <span id="ddlCount" class="count-badge">0</span>
+        </header>
+
+        <details class="ddl-group" open>
+          <summary>
+            <span>今日</span>
+            <span id="todayCount">0</span>
+          </summary>
+          <div id="todayList" class="ddl-list"></div>
+        </details>
+
+        <details class="ddl-group">
+          <summary>
+            <span>本周</span>
+            <span id="weekCount">0</span>
+          </summary>
+          <div id="weekList" class="ddl-list"></div>
+        </details>
+
+        <details class="ddl-group">
+          <summary>
+            <span>未来</span>
+            <span id="futureCount">0</span>
+          </summary>
+          <div id="futureList" class="ddl-list"></div>
+        </details>
+      </aside>
     </main>
 
+    <div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
+    <aside
+      id="previousWeekDrawer"
+      class="history-drawer"
+      aria-labelledby="previousWeekTitle"
+      aria-hidden="true"
+    >
+      <header class="drawer-header">
+        <div>
+          <h2 id="previousWeekTitle">上周随记</h2>
+          <p id="previousWeekLabel"></p>
+        </div>
+        <button id="closeDrawerBtn" class="icon-button" type="button" aria-label="关闭上周随记">×</button>
+      </header>
+      <pre id="previousWeekContent" class="history-content"></pre>
+    </aside>
+
+    <template id="ddlItemTemplate">
+      <label class="ddl-item">
+        <input class="ddl-checkbox" type="checkbox">
+        <span class="ddl-content">
+          <span class="ddl-title"></span>
+          <span class="ddl-meta">
+            <time class="ddl-date"></time>
+            <span class="ddl-status"></span>
+          </span>
+        </span>
+      </label>
+    </template>
+
     <template id="emptyTemplate">
-      <div class="empty-state">暂无任务</div>
+      <p class="empty-state">暂无提醒</p>
     </template>
 
     <script src="app.js"></script>
