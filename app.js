@@ -6,6 +6,8 @@
   const LONG_TERM_NOTE_KEY = "workspace_long_term_note";
   const LONG_TERM_EXTRACTED_KEY = `${EXTRACTED_PREFIX}long_term`;
   const TASK_STATE_KEY = "workspace_task_states";
+  const PARSER_VERSION_KEY = "workspace_parser_version";
+  const PARSER_VERSION = "3";
   const LEGACY_TASK_KEY = "ddl-assistant.tasks.v1";
   const EXTRACT_DELAY = 320;
 
@@ -51,8 +53,7 @@
     document.getElementById("weekLabel").textContent =
       `${formatShortDate(currentWeek.start)} - ${formatShortDate(currentWeek.end)}`;
 
-    updateCurrentWeekExtraction();
-    updateLongTermExtraction();
+    rebuildExtractionCaches();
 
     bindEvents();
     renderAllReminders();
@@ -109,6 +110,45 @@
       referenceDate: startOfToday()
     });
     window.localStorage.setItem(LONG_TERM_EXTRACTED_KEY, JSON.stringify(items));
+  }
+
+  function rebuildExtractionCaches() {
+    const noteEntries = [];
+    const extractedKeys = [];
+
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (!key) continue;
+
+      if (key.startsWith(NOTE_PREFIX)) {
+        noteEntries.push([key, window.localStorage.getItem(key) || ""]);
+      } else if (key.startsWith(EXTRACTED_PREFIX)) {
+        extractedKeys.push(key);
+      }
+    }
+
+    extractedKeys.forEach((key) => window.localStorage.removeItem(key));
+
+    noteEntries.forEach(([key, text]) => {
+      const sourceId = key.slice(NOTE_PREFIX.length);
+      const referenceDate =
+        sourceId === currentWeek.id
+          ? startOfToday()
+          : getIsoWeekStartFromId(sourceId) || startOfToday();
+      const items = extractDdlItems(text, {
+        sourceId,
+        sourceType: "weekly",
+        referenceDate
+      });
+
+      window.localStorage.setItem(
+        `${EXTRACTED_PREFIX}${sourceId}`,
+        JSON.stringify(items)
+      );
+    });
+
+    updateLongTermExtraction();
+    window.localStorage.setItem(PARSER_VERSION_KEY, PARSER_VERSION);
   }
 
   function extractDdlItems(text, options) {
@@ -369,7 +409,7 @@
     const state = taskStates[item.id] || { done: false };
 
     checkbox.checked = Boolean(state.done);
-    title.textContent = item.title;
+    title.textContent = normalizeReminderTitle(item);
     date.textContent = `${formatCompactDate(fromDateKey(item.dueDate))} · ${item.dateLabel}`;
     date.dateTime = item.dueDate;
 
@@ -546,7 +586,10 @@
   }
 
   function normalizePrefix(prefix) {
-    return prefix.replace(/[:：]\s*$/, "").trim();
+    return prefix
+      .replace(/\s+/g, " ")
+      .replace(/[\s:：]+$/g, "")
+      .trim();
   }
 
   function getTaskText(line) {
@@ -569,11 +612,56 @@
   function cleanTaskTitle(title) {
     let result = title.trim();
     const leadingNumberPattern =
-      /^(?:(?:\(|（)\s*\d+\s*(?:\)|）)|\d+\s*[.．、]|[①②③④⑤⑥⑦⑧⑨⑩])\s*/;
+      /^(?:(?:[\(（]\s*\d+\s*[\)）])|(?:\d+\s*[\)）.．、:：])|(?:\d+\s+)|(?:[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳])|(?:[一二三四五六七八九十]+\s*[、.．]))[\s—–\-:：、.．]*/u;
+    const edgeNoisePattern = /^[\s—–\-:：、.．]+|[\s—–\-:：、.．]+$/g;
 
-    result = result.replace(leadingNumberPattern, "");
-    result = result.replace(/^[\s—–\-:：]+|[\s—–\-:：]+$/g, "");
+    while (leadingNumberPattern.test(result)) {
+      result = result.replace(leadingNumberPattern, "");
+    }
+
+    result = result.replace(edgeNoisePattern, "");
     return result.trim();
+  }
+
+  function normalizeReminderTitle(item) {
+    let rawTitle = String(item.title || "").trim();
+    let prefix = "";
+    const prefixMatch = rawTitle.match(/^\s*\[([^\]]+)\]\s*/);
+
+    if (prefixMatch) {
+      prefix = normalizePrefix(prefixMatch[1]);
+      rawTitle = rawTitle.slice(prefixMatch[0].length);
+    } else if (item.contextPrefix) {
+      prefix = normalizePrefix(item.contextPrefix);
+    }
+
+    const fallbackDate = parseDateExpression(rawTitle, startOfToday());
+    const dateTokens = [
+      item.dateLabel,
+      item.matchedText,
+      fallbackDate && fallbackDate.matchedText
+    ].filter(Boolean);
+
+    dateTokens.forEach((token) => {
+      rawTitle = rawTitle.split(token).join("");
+    });
+
+    const cleanedTitle = cleanTaskTitle(rawTitle);
+    if (!cleanedTitle) return prefix ? `[${prefix}]` : "";
+
+    return prefix ? `[${prefix}] ${cleanedTitle}` : cleanedTitle;
+  }
+
+  function getIsoWeekStartFromId(weekId) {
+    const match = weekId.match(/^(\d{4})_W(\d{2})$/);
+    if (!match) return null;
+
+    const year = Number(match[1]);
+    const week = Number(match[2]);
+    if (week < 1 || week > 53) return null;
+
+    const weekOneAnchor = new Date(year, 0, 4);
+    return addDays(startOfIsoWeek(weekOneAnchor), (week - 1) * 7);
   }
 
   function toDateKey(date) {
@@ -625,9 +713,12 @@
     if (!("serviceWorker" in navigator)) return;
 
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js").catch(() => {
-        // file:// and non-secure origins do not support service workers.
-      });
+      navigator.serviceWorker
+        .register("./sw.js?v=6", { updateViaCache: "none" })
+        .then((registration) => registration.update())
+        .catch(() => {
+          // file:// and non-secure origins do not support service workers.
+        });
     });
   }
 })();
