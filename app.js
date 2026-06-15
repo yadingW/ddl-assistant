@@ -7,7 +7,7 @@
   const LONG_TERM_EXTRACTED_KEY = `${EXTRACTED_PREFIX}long_term`;
   const TASK_STATE_KEY = "workspace_task_states";
   const PARSER_VERSION_KEY = "workspace_parser_version";
-  const PARSER_VERSION = "3";
+  const PARSER_VERSION = "4";
   const LEGACY_TASK_KEY = "ddl-assistant.tasks.v1";
   const EXTRACT_DELAY = 320;
 
@@ -20,6 +20,9 @@
   const drawerBackdrop = document.getElementById("drawerBackdrop");
   const previousWeekContent = document.getElementById("previousWeekContent");
   const previousWeekLabel = document.getElementById("previousWeekLabel");
+  const exportBackupBtn = document.getElementById("exportBackupBtn");
+  const importBackupBtn = document.getElementById("importBackupBtn");
+  const backupFileInput = document.getElementById("backupFileInput");
 
   const lists = {
     today: document.getElementById("todayList"),
@@ -40,6 +43,7 @@
   const currentNoteKey = `${NOTE_PREFIX}${currentWeek.id}`;
   const currentExtractedKey = `${EXTRACTED_PREFIX}${currentWeek.id}`;
   let extractTimer = null;
+  let historySaveTimer = null;
   let taskStates = loadJson(TASK_STATE_KEY, {});
 
   initialize();
@@ -53,6 +57,8 @@
     document.getElementById("weekLabel").textContent =
       `${formatShortDate(currentWeek.start)} - ${formatShortDate(currentWeek.end)}`;
 
+    anchorRelativeDates(noteInput, currentNoteKey, startOfToday());
+    anchorRelativeDates(longTermInput, LONG_TERM_NOTE_KEY, startOfToday());
     rebuildExtractionCaches();
 
     bindEvents();
@@ -63,9 +69,14 @@
   function bindEvents() {
     noteInput.addEventListener("input", handleNoteInput);
     longTermInput.addEventListener("input", handleLongTermInput);
-    previousWeekBtn.addEventListener("click", openPreviousWeekDrawer);
+    previousWeekContent.addEventListener("input", savePreviousWeekNote);
+    previousWeekContent.addEventListener("blur", savePreviousWeekNote);
+    previousWeekBtn.addEventListener("click", () => openPreviousWeekDrawer());
     closeDrawerBtn.addEventListener("click", closePreviousWeekDrawer);
     drawerBackdrop.addEventListener("click", closePreviousWeekDrawer);
+    exportBackupBtn.addEventListener("click", exportBackup);
+    importBackupBtn.addEventListener("click", () => backupFileInput.click());
+    backupFileInput.addEventListener("change", importBackup);
 
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && drawer.classList.contains("open")) {
@@ -88,10 +99,60 @@
     showSaveStatus("已保存");
     window.clearTimeout(extractTimer);
     extractTimer = window.setTimeout(() => {
+      anchorRelativeDates(noteInput, currentNoteKey, startOfToday());
+      anchorRelativeDates(longTermInput, LONG_TERM_NOTE_KEY, startOfToday());
       updateCurrentWeekExtraction();
       updateLongTermExtraction();
       renderAllReminders();
     }, EXTRACT_DELAY);
+  }
+
+  function anchorRelativeDates(textarea, storageKey, referenceDate) {
+    const original = textarea.value;
+    const selectionStart = textarea.selectionStart;
+    const selectionEnd = textarea.selectionEnd;
+    const tokenPattern =
+      /(下周[一二三四五六日天]|本周[一二三四五六日天]|这周[一二三四五六日天]|周[一二三四五六日天]|大后天|后天|明天|今天|今日|当天|本日)/g;
+    const replacements = [];
+
+    const anchored = original.replace(tokenPattern, (token, offset) => {
+      const parsed = parseDateExpression(token, referenceDate);
+      if (!parsed) return token;
+
+      const replacement = formatAnchorDate(parsed.date);
+      replacements.push({
+        start: offset,
+        end: offset + token.length,
+        replacementLength: replacement.length
+      });
+      return replacement;
+    });
+
+    if (anchored === original) return;
+
+    textarea.value = anchored;
+    textarea.setSelectionRange(
+      mapSelectionPosition(selectionStart, replacements),
+      mapSelectionPosition(selectionEnd, replacements)
+    );
+    window.localStorage.setItem(storageKey, anchored);
+  }
+
+  function mapSelectionPosition(position, replacements) {
+    let mapped = position;
+
+    replacements.forEach((replacement) => {
+      const originalLength = replacement.end - replacement.start;
+      const delta = replacement.replacementLength - originalLength;
+
+      if (replacement.end <= position) {
+        mapped += delta;
+      } else if (replacement.start < position) {
+        mapped = replacement.start + replacement.replacementLength;
+      }
+    });
+
+    return Math.max(0, mapped);
   }
 
   function updateCurrentWeekExtraction() {
@@ -101,6 +162,20 @@
       referenceDate: startOfToday()
     });
     window.localStorage.setItem(currentExtractedKey, JSON.stringify(items));
+  }
+
+  function updateWeeklyExtraction(weekId, text) {
+    const referenceDate = getIsoWeekStartFromId(weekId) || startOfToday();
+    const items = extractDdlItems(text, {
+      sourceId: weekId,
+      sourceType: "weekly",
+      referenceDate
+    });
+
+    window.localStorage.setItem(
+      `${EXTRACTED_PREFIX}${weekId}`,
+      JSON.stringify(items)
+    );
   }
 
   function updateLongTermExtraction() {
@@ -157,7 +232,7 @@
     let currentPrefix = "";
     let activeDate = null;
 
-    text.split(/\r?\n/).forEach((rawLine) => {
+    text.split(/\r?\n/).forEach((rawLine, lineIndex) => {
       const line = rawLine.trim();
 
       if (!line) {
@@ -190,6 +265,7 @@
           sourceId,
           sourceType,
           sourceLine: line,
+          lineIndex,
           currentPrefix,
           title: titleWithoutDate,
           dateResult
@@ -207,6 +283,7 @@
         sourceId,
         sourceType,
         sourceLine: line,
+        lineIndex,
         currentPrefix,
         title: inheritedTitle,
         dateResult: activeDate
@@ -222,6 +299,7 @@
       sourceId,
       sourceType,
       sourceLine,
+      lineIndex,
       currentPrefix,
       title,
       dateResult
@@ -237,6 +315,7 @@
       id,
       title: displayTitle,
       sourceLine,
+      lineIndex,
       contextPrefix: currentPrefix,
       dueDate: dateResult.dateKey,
       dateLabel: dateResult.label,
@@ -403,6 +482,7 @@
     const fragment = document.getElementById("ddlItemTemplate").content.cloneNode(true);
     const label = fragment.querySelector(".ddl-item");
     const checkbox = fragment.querySelector(".ddl-checkbox");
+    const content = fragment.querySelector(".ddl-content");
     const title = fragment.querySelector(".ddl-title");
     const date = fragment.querySelector(".ddl-date");
     const status = fragment.querySelector(".ddl-status");
@@ -431,7 +511,88 @@
       renderAllReminders();
     });
 
+    content.setAttribute("role", "button");
+    content.tabIndex = 0;
+    content.title = "定位到原文";
+    content.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      locateReminderSource(item);
+    });
+    content.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      locateReminderSource(item);
+    });
+
     return fragment;
+  }
+
+  function locateReminderSource(item) {
+    let target = null;
+
+    if (item.sourceType === "long-term" || item.sourceId === "long_term") {
+      const panel = document.querySelector(".long-term-panel");
+      panel.open = true;
+      target = longTermInput;
+    } else if (item.sourceId === currentWeek.id) {
+      target = noteInput;
+    } else if (item.sourceId === previousWeek.id) {
+      openPreviousWeekDrawer(false);
+      target = previousWeekContent;
+    }
+
+    if (!target) return;
+
+    window.requestAnimationFrame(() => {
+      const range = findSourceLineRange(target.value, item);
+      target.focus();
+      target.setSelectionRange(range.end, range.end);
+      scrollTextareaToLine(target, range.lineIndex);
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  }
+
+  function findSourceLineRange(text, item) {
+    const lines = text.split(/\r?\n/);
+    let lineIndex = Number.isInteger(item.lineIndex) ? item.lineIndex : -1;
+
+    if (
+      lineIndex < 0 ||
+      lineIndex >= lines.length ||
+      lines[lineIndex].trim() !== String(item.sourceLine || "").trim()
+    ) {
+      lineIndex = lines.findIndex(
+        (line) => line.trim() === String(item.sourceLine || "").trim()
+      );
+    }
+
+    if (lineIndex < 0) {
+      const fallback = normalizeReminderTitle(item);
+      lineIndex = lines.findIndex((line) => line.includes(fallback));
+    }
+
+    lineIndex = Math.max(0, lineIndex);
+    let start = 0;
+    for (let index = 0; index < lineIndex; index += 1) {
+      start += lines[index].length + 1;
+    }
+
+    return {
+      lineIndex,
+      start,
+      end: start + (lines[lineIndex] || "").length
+    };
+  }
+
+  function scrollTextareaToLine(textarea, lineIndex) {
+    const lineHeight = Number.parseFloat(
+      window.getComputedStyle(textarea).lineHeight
+    ) || 24;
+    textarea.scrollTop = Math.max(
+      0,
+      lineIndex * lineHeight - textarea.clientHeight / 2
+    );
   }
 
   function getDateGroup(dateKey) {
@@ -443,16 +604,37 @@
     return "future";
   }
 
-  function openPreviousWeekDrawer() {
+  function openPreviousWeekDrawer(focusCloseButton = true) {
     const note = window.localStorage.getItem(`${NOTE_PREFIX}${previousWeek.id}`) || "";
     previousWeekLabel.textContent =
       `${formatShortDate(previousWeek.start)} - ${formatShortDate(previousWeek.end)}`;
-    previousWeekContent.textContent = note || "上周没有随记。";
+    previousWeekContent.value = note;
+    previousWeekContent.placeholder = "上周没有随记。";
     drawerBackdrop.hidden = false;
     drawer.classList.add("open");
     drawer.setAttribute("aria-hidden", "false");
     document.body.classList.add("drawer-open");
-    closeDrawerBtn.focus();
+    if (focusCloseButton) {
+      closeDrawerBtn.focus();
+    }
+  }
+
+  function savePreviousWeekNote(event) {
+    const save = () => {
+      const key = `${NOTE_PREFIX}${previousWeek.id}`;
+      window.localStorage.setItem(key, previousWeekContent.value);
+      updateWeeklyExtraction(previousWeek.id, previousWeekContent.value);
+      renderAllReminders();
+      showSaveStatus("已保存");
+    };
+
+    window.clearTimeout(historySaveTimer);
+    if (event.type === "blur") {
+      save();
+      return;
+    }
+
+    historySaveTimer = window.setTimeout(save, EXTRACT_DELAY);
   }
 
   function closePreviousWeekDrawer() {
@@ -461,6 +643,60 @@
     drawerBackdrop.hidden = true;
     document.body.classList.remove("drawer-open");
     previousWeekBtn.focus();
+  }
+
+  function exportBackup() {
+    const backup = {};
+
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (key && key.startsWith("workspace_")) {
+        backup[key] = window.localStorage.getItem(key);
+      }
+    }
+
+    const blob = new Blob([JSON.stringify(backup, null, 2)], {
+      type: "application/json;charset=utf-8"
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = `ddl-backup-${formatFileDate(new Date())}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  async function importBackup() {
+    const [file] = backupFileInput.files;
+    if (!file) return;
+
+    try {
+      const parsed = JSON.parse(await file.text());
+      if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
+        throw new Error("invalid backup");
+      }
+
+      const entries = Object.entries(parsed).filter(
+        ([key, value]) =>
+          key.startsWith("workspace_") && typeof value === "string"
+      );
+      if (!entries.length) {
+        throw new Error("empty backup");
+      }
+
+      entries.forEach(([key, value]) => {
+        window.localStorage.setItem(key, value);
+      });
+
+      window.alert("恢复成功，页面将重新加载。");
+      window.location.reload();
+    } catch {
+      window.alert("恢复失败：请选择由本应用导出的 JSON 备份文件。");
+      backupFileInput.value = "";
+    }
   }
 
   function showSaveStatus(message) {
@@ -671,6 +907,17 @@
     return `${year}-${month}-${day}`;
   }
 
+  function formatAnchorDate(date) {
+    return `${date.getMonth() + 1}.${date.getDate()}`;
+  }
+
+  function formatFileDate(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}${month}${day}`;
+  }
+
   function fromDateKey(key) {
     const [year, month, day] = key.split("-").map(Number);
     return new Date(year, month - 1, day);
@@ -714,7 +961,7 @@
 
     window.addEventListener("load", () => {
       navigator.serviceWorker
-        .register("./sw.js?v=6", { updateViaCache: "none" })
+        .register("./sw.js?v=7", { updateViaCache: "none" })
         .then((registration) => registration.update())
         .catch(() => {
           // file:// and non-secure origins do not support service workers.

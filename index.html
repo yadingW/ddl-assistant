@@ -8,7 +8,7 @@
     <title>工作便签本</title>
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=6">
+    <link rel="stylesheet" href="style.css?v=7">
   </head>
   <body>
     <main class="workspace">
@@ -47,7 +47,12 @@
 
         <footer class="note-footer">
           <span id="weekLabel"></span>
-          <span>自动保存</span>
+          <span class="footer-actions">
+            <button id="exportBackupBtn" class="footer-link" type="button">导出备份</button>
+            <button id="importBackupBtn" class="footer-link" type="button">恢复备份</button>
+            <span>自动保存</span>
+          </span>
+          <input id="backupFileInput" type="file" accept=".json,application/json" hidden>
         </footer>
       </section>
 
@@ -100,7 +105,12 @@
         </div>
         <button id="closeDrawerBtn" class="icon-button" type="button" aria-label="关闭上周随记">×</button>
       </header>
-      <pre id="previousWeekContent" class="history-content"></pre>
+      <textarea
+        id="previousWeekContent"
+        class="history-content"
+        aria-label="编辑上周随记"
+        spellcheck="false"
+      ></textarea>
     </aside>
 
     <template id="ddlItemTemplate">
@@ -120,6 +130,6 @@
       <p class="empty-state">暂无提醒</p>
     </template>
 
-    <script src="app.js?v=6"></script>
+    <script src="app.js?v=7"></script>
   </body>
 </html>
