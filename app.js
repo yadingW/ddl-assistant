@@ -7,7 +7,7 @@
   const LONG_TERM_EXTRACTED_KEY = `${EXTRACTED_PREFIX}long_term`;
   const TASK_STATE_KEY = "workspace_task_states";
   const PARSER_VERSION_KEY = "workspace_parser_version";
-  const PARSER_VERSION = "4";
+  const PARSER_VERSION = "6";
   const LEGACY_TASK_KEY = "ddl-assistant.tasks.v1";
   const EXTRACT_DELAY = 320;
 
@@ -229,14 +229,14 @@
   function extractDdlItems(text, options) {
     const { sourceId, sourceType, referenceDate } = options;
     const items = [];
-    let currentPrefix = "";
+    let currentContext = "";
     let activeDate = null;
 
     text.split(/\r?\n/).forEach((rawLine, lineIndex) => {
       const line = rawLine.trim();
 
       if (!line) {
-        currentPrefix = "";
+        currentContext = "";
         activeDate = null;
         return;
       }
@@ -245,12 +245,12 @@
       const dateResult = parseDateExpression(taskText, referenceDate);
 
       if (!dateResult && /[:：]\s*$/.test(taskText)) {
-        currentPrefix = normalizePrefix(taskText);
+        currentContext = normalizePrefix(taskText);
+        activeDate = null;
         return;
       }
 
       if (dateResult) {
-        activeDate = null;
         const titleWithoutDate = cleanTaskTitle(
           removeMatchedDate(taskText, dateResult)
         );
@@ -260,13 +260,14 @@
           return;
         }
 
+        activeDate = dateResult;
         addExtractedItem({
           items,
           sourceId,
           sourceType,
           sourceLine: line,
           lineIndex,
-          currentPrefix,
+          currentPrefix: currentContext,
           title: titleWithoutDate,
           dateResult
         });
@@ -284,7 +285,7 @@
         sourceType,
         sourceLine: line,
         lineIndex,
-        currentPrefix,
+        currentPrefix: currentContext,
         title: inheritedTitle,
         dateResult: activeDate
       });
@@ -961,7 +962,7 @@
 
     window.addEventListener("load", () => {
       navigator.serviceWorker
-        .register("./sw.js?v=7", { updateViaCache: "none" })
+        .register("./sw.js?v=9", { updateViaCache: "none" })
         .then((registration) => registration.update())
         .catch(() => {
           // file:// and non-secure origins do not support service workers.
