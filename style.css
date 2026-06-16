@@ -371,6 +371,32 @@ h1 {
   font-size: 12px;
 }
 
+.archive-panel {
+  border-top: 1px solid var(--line);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+
+.archive-toggle {
+  width: 100%;
+  min-height: 34px;
+  border: 0;
+  padding: 0 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+}
+
+.archive-toggle:hover {
+  color: var(--accent);
+}
+
+.archive-toggle:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .drawer-backdrop {
   position: fixed;
   inset: 0;
@@ -432,6 +458,12 @@ h1 {
   font-family: inherit;
   font-size: 15px;
   line-height: 1.8;
+}
+
+.archive-drawer-list {
+  height: calc(100vh - 110px);
+  overflow: auto;
+  padding: 18px 0 28px;
 }
 
 body.drawer-open {

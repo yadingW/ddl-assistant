@@ -20,6 +20,10 @@
   const drawerBackdrop = document.getElementById("drawerBackdrop");
   const previousWeekContent = document.getElementById("previousWeekContent");
   const previousWeekLabel = document.getElementById("previousWeekLabel");
+  const archiveDrawer = document.getElementById("archiveDrawer");
+  const archiveDrawerList = document.getElementById("archiveDrawerList");
+  const archiveSummary = document.getElementById("archiveSummary");
+  const closeArchiveBtn = document.getElementById("closeArchiveBtn");
   const exportBackupBtn = document.getElementById("exportBackupBtn");
   const importBackupBtn = document.getElementById("importBackupBtn");
   const backupFileInput = document.getElementById("backupFileInput");
@@ -36,6 +40,8 @@
     week: document.getElementById("weekCount"),
     future: document.getElementById("futureCount")
   };
+  const archiveView = createArchiveView();
+  let archiveItems = [];
 
   const now = new Date();
   const currentWeek = getIsoWeekInfo(now);
@@ -73,14 +79,15 @@
     previousWeekContent.addEventListener("blur", savePreviousWeekNote);
     previousWeekBtn.addEventListener("click", () => openPreviousWeekDrawer());
     closeDrawerBtn.addEventListener("click", closePreviousWeekDrawer);
-    drawerBackdrop.addEventListener("click", closePreviousWeekDrawer);
+    closeArchiveBtn.addEventListener("click", closeArchiveDrawer);
+    drawerBackdrop.addEventListener("click", closeOpenDrawer);
     exportBackupBtn.addEventListener("click", exportBackup);
     importBackupBtn.addEventListener("click", () => backupFileInput.click());
     backupFileInput.addEventListener("change", importBackup);
 
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && drawer.classList.contains("open")) {
-        closePreviousWeekDrawer();
+      if (event.key === "Escape") {
+        closeOpenDrawer();
       }
     });
   }
@@ -416,7 +423,7 @@
 
   function renderAllReminders() {
     const allItems = loadAllExtractedItems();
-    const grouped = { today: [], week: [], future: [] };
+    const grouped = { today: [], week: [], future: [], archive: [] };
 
     allItems
       .filter(shouldDisplayItem)
@@ -425,13 +432,14 @@
         return dateOrder || a.title.localeCompare(b.title, "zh-CN");
       })
       .forEach((item) => {
-        grouped[getDateGroup(item.dueDate)].push(item);
+        grouped[getDateGroup(item)].push(item);
       });
 
-    Object.keys(grouped).forEach((groupName) => {
+    ["today", "week", "future"].forEach((groupName) => {
       renderGroup(groupName, grouped[groupName]);
       counts[groupName].textContent = String(grouped[groupName].length);
     });
+    renderArchiveGroup(grouped.archive);
 
     counts.total.textContent = String(
       grouped.today.length + grouped.week.length + grouped.future.length
@@ -477,6 +485,32 @@
     items.forEach((item) => {
       list.appendChild(createReminderElement(item));
     });
+  }
+
+  function createArchiveView() {
+    const sidebar = document.querySelector(".ddl-sidebar");
+    const wrapper = document.createElement("section");
+    const button = document.createElement("button");
+    const list = document.createElement("div");
+
+    wrapper.className = "archive-panel";
+    button.className = "archive-toggle";
+    button.type = "button";
+    button.addEventListener("click", openArchiveDrawer);
+    wrapper.append(button);
+    sidebar.appendChild(wrapper);
+
+    return { wrapper, button };
+  }
+
+  function renderArchiveGroup(items) {
+    archiveItems = items;
+    archiveView.button.textContent = `查看历史已完成 (${items.length})`;
+    archiveView.button.disabled = items.length === 0;
+    archiveView.wrapper.classList.toggle("has-items", items.length > 0);
+    if (archiveDrawer.classList.contains("open")) {
+      renderArchiveDrawer();
+    }
   }
 
   function createReminderElement(item) {
@@ -596,16 +630,19 @@
     );
   }
 
-  function getDateGroup(dateKey) {
+  function getDateGroup(item) {
     const today = startOfToday();
-    const dueDate = fromDateKey(dateKey);
+    const dueDate = fromDateKey(item.dueDate);
+    const done = Boolean(taskStates[item.id] && taskStates[item.id].done);
 
+    if (dueDate < today && done) return "archive";
     if (dueDate <= today) return "today";
     if (dueDate <= endOfIsoWeek(today)) return "week";
     return "future";
   }
 
   function openPreviousWeekDrawer(focusCloseButton = true) {
+    closeArchiveDrawer(false);
     const note = window.localStorage.getItem(`${NOTE_PREFIX}${previousWeek.id}`) || "";
     previousWeekLabel.textContent =
       `${formatShortDate(previousWeek.start)} - ${formatShortDate(previousWeek.end)}`;
@@ -618,6 +655,34 @@
     if (focusCloseButton) {
       closeDrawerBtn.focus();
     }
+  }
+
+  function openArchiveDrawer() {
+    if (!archiveItems.length) return;
+
+    closePreviousWeekDrawer(false);
+    renderArchiveDrawer();
+    drawerBackdrop.hidden = false;
+    archiveDrawer.classList.add("open");
+    archiveDrawer.setAttribute("aria-hidden", "false");
+    document.body.classList.add("drawer-open");
+    closeArchiveBtn.focus();
+  }
+
+  function renderArchiveDrawer() {
+    archiveSummary.textContent = `早于今天且已完成 · ${archiveItems.length} 条`;
+    archiveDrawerList.replaceChildren();
+
+    if (!archiveItems.length) {
+      archiveDrawerList.appendChild(
+        document.getElementById("emptyTemplate").content.cloneNode(true)
+      );
+      return;
+    }
+
+    archiveItems.forEach((item) => {
+      archiveDrawerList.appendChild(createReminderElement(item));
+    });
   }
 
   function savePreviousWeekNote(event) {
@@ -638,12 +703,44 @@
     historySaveTimer = window.setTimeout(save, EXTRACT_DELAY);
   }
 
-  function closePreviousWeekDrawer() {
+  function closePreviousWeekDrawer(restoreFocus = true) {
     drawer.classList.remove("open");
     drawer.setAttribute("aria-hidden", "true");
-    drawerBackdrop.hidden = true;
-    document.body.classList.remove("drawer-open");
-    previousWeekBtn.focus();
+    if (!archiveDrawer.classList.contains("open")) {
+      drawerBackdrop.hidden = true;
+      document.body.classList.remove("drawer-open");
+    }
+    if (restoreFocus) {
+      previousWeekBtn.focus();
+    }
+  }
+
+  function closeArchiveDrawer(restoreFocus = true) {
+    archiveDrawer.classList.remove("open");
+    archiveDrawer.setAttribute("aria-hidden", "true");
+    if (!drawer.classList.contains("open")) {
+      drawerBackdrop.hidden = true;
+      document.body.classList.remove("drawer-open");
+    }
+    if (restoreFocus) {
+      archiveView.button.focus();
+    }
+  }
+
+  function closeOpenDrawer() {
+    if (archiveDrawer.classList.contains("open")) {
+      closeArchiveDrawer();
+    }
+    if (drawer.classList.contains("open")) {
+      closePreviousWeekDrawer();
+    }
+    if (
+      !archiveDrawer.classList.contains("open") &&
+      !drawer.classList.contains("open")
+    ) {
+      drawerBackdrop.hidden = true;
+      document.body.classList.remove("drawer-open");
+    }
   }
 
   function exportBackup() {
@@ -962,7 +1059,7 @@
 
     window.addEventListener("load", () => {
       navigator.serviceWorker
-        .register("./sw.js?v=9", { updateViaCache: "none" })
+        .register("./sw.js?v=11", { updateViaCache: "none" })
         .then((registration) => registration.update())
         .catch(() => {
           // file:// and non-secure origins do not support service workers.

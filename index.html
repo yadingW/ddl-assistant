@@ -8,7 +8,7 @@
     <title>工作便签本</title>
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=9">
+    <link rel="stylesheet" href="style.css?v=11">
   </head>
   <body>
     <main class="workspace">
@@ -113,6 +113,22 @@
       ></textarea>
     </aside>
 
+    <aside
+      id="archiveDrawer"
+      class="history-drawer"
+      aria-labelledby="archiveTitle"
+      aria-hidden="true"
+    >
+      <header class="drawer-header">
+        <div>
+          <h2 id="archiveTitle">历史已完成</h2>
+          <p id="archiveSummary">早于今天且已完成</p>
+        </div>
+        <button id="closeArchiveBtn" class="icon-button" type="button" aria-label="关闭历史已完成">×</button>
+      </header>
+      <div id="archiveDrawerList" class="ddl-list archive-drawer-list"></div>
+    </aside>
+
     <template id="ddlItemTemplate">
       <label class="ddl-item">
         <input class="ddl-checkbox" type="checkbox">
@@ -130,6 +146,6 @@
       <p class="empty-state">暂无提醒</p>
     </template>
 
-    <script src="app.js?v=9"></script>
+    <script src="app.js?v=11"></script>
   </body>
 </html>
