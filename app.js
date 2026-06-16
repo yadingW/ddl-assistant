@@ -7,7 +7,7 @@
   const LONG_TERM_EXTRACTED_KEY = `${EXTRACTED_PREFIX}long_term`;
   const TASK_STATE_KEY = "workspace_task_states";
   const PARSER_VERSION_KEY = "workspace_parser_version";
-  const PARSER_VERSION = "6";
+  const PARSER_VERSION = "7";
   const LEGACY_TASK_KEY = "ddl-assistant.tasks.v1";
   const EXTRACT_DELAY = 320;
 
@@ -26,6 +26,7 @@
   const closeArchiveBtn = document.getElementById("closeArchiveBtn");
   const exportBackupBtn = document.getElementById("exportBackupBtn");
   const importBackupBtn = document.getElementById("importBackupBtn");
+  const enableReminderBtn = document.getElementById("enableReminderBtn");
   const backupFileInput = document.getElementById("backupFileInput");
 
   const lists = {
@@ -50,7 +51,9 @@
   const currentExtractedKey = `${EXTRACTED_PREFIX}${currentWeek.id}`;
   let extractTimer = null;
   let historySaveTimer = null;
+  let reminderTimer = null;
   let taskStates = loadJson(TASK_STATE_KEY, {});
+  const notifiedReminders = new Set();
 
   initialize();
 
@@ -70,6 +73,8 @@
     bindEvents();
     renderAllReminders();
     registerServiceWorker();
+    updateReminderButton();
+    startReminderLoop();
   }
 
   function bindEvents() {
@@ -83,6 +88,7 @@
     drawerBackdrop.addEventListener("click", closeOpenDrawer);
     exportBackupBtn.addEventListener("click", exportBackup);
     importBackupBtn.addEventListener("click", () => backupFileInput.click());
+    enableReminderBtn.addEventListener("click", requestReminderPermission);
     backupFileInput.addEventListener("change", importBackup);
 
     document.addEventListener("keydown", (event) => {
@@ -126,14 +132,18 @@
       const parsed = parseDateExpression(token, referenceDate);
       if (!parsed) return token;
 
-      const replacement = formatAnchorDate(parsed.date);
+      const nextChar = original[offset + token.length] || "";
+      const prevChar = original[offset - 1] || "";
+      let replacement = formatAnchorDate(parsed.date);
+      if (/\d/.test(nextChar)) replacement += " ";
+      if (/\d/.test(prevChar)) replacement = ` ${replacement}`;
       replacements.push({
         start: offset,
         end: offset + token.length,
         replacementLength: replacement.length
       });
       return replacement;
-    });
+    }).replace(/(\d{1,2}\.\d{1,2})(?=\d{1,2}(?:点|:))/g, "$1 ");
 
     if (anchored === original) return;
 
@@ -259,7 +269,7 @@
 
       if (dateResult) {
         const titleWithoutDate = cleanTaskTitle(
-          removeMatchedDate(taskText, dateResult)
+          removeMatchedTime(removeMatchedDate(taskText, dateResult), dateResult)
         );
 
         if (!titleWithoutDate) {
@@ -326,6 +336,8 @@
       lineIndex,
       contextPrefix: currentPrefix,
       dueDate: dateResult.dateKey,
+      dueTime: dateResult.dueTime || null,
+      dueAt: dateResult.dueAt || null,
       dateLabel: dateResult.label,
       sourceId,
       sourceType,
@@ -369,13 +381,7 @@
 
       const date = parser.create(match);
       if (date) {
-        return {
-          date,
-          dateKey: toDateKey(date),
-          label: match[0].trim(),
-          matchedText: match[0].trim(),
-          matchIndex: match.index
-        };
+        return createDateResult(date, match[0].trim(), match[0].trim(), match.index, text);
       }
     }
 
@@ -390,13 +396,7 @@
       const match = text.match(rule.pattern);
       if (match) {
         const date = addDays(startOfDay(referenceDate), rule.days);
-        return {
-          date,
-          dateKey: toDateKey(date),
-          label: match[0],
-          matchedText: match[0],
-          matchIndex: match.index
-        };
+        return createDateResult(date, match[0], match[0], match.index, text);
       }
     }
 
@@ -409,12 +409,60 @@
         targetDay - 1 + weekOffset
       );
 
+      return createDateResult(date, weekMatch[0], weekMatch[0], weekMatch.index, text);
+    }
+
+    return null;
+  }
+
+  function createDateResult(date, label, matchedText, matchIndex, sourceText) {
+    const dateKey = toDateKey(date);
+    const timeResult = parseTimeExpression(sourceText);
+    const dueTime = timeResult ? timeResult.value : null;
+
+    return {
+      date,
+      dateKey,
+      label,
+      matchedText,
+      matchIndex,
+      dueTime,
+      dueAt: dueTime ? `${dateKey}T${dueTime}:00` : null,
+      timeMatchedText: timeResult ? timeResult.matchedText : null,
+      timeMatchIndex: timeResult ? timeResult.matchIndex : null
+    };
+  }
+
+  function parseTimeExpression(text) {
+    const timePattern = /(上午|早上|下午|晚上|今晚|中午)?\s*(\d{1,2})(?::(\d{2})|点(?:半|(\d{1,2})分?)?)/g;
+    let match;
+
+    while ((match = timePattern.exec(text))) {
+      let hour = Number(match[2]);
+      let minute = match[3] ? Number(match[3]) : 0;
+      const period = match[1] || "";
+
+      if (match[0].includes("半")) {
+        minute = 30;
+      } else if (match[4]) {
+        minute = Number(match[4]);
+      }
+
+      if (hour > 23 || minute > 59) continue;
+      if ((period === "下午" || period === "晚上" || period === "今晚") && hour < 12) {
+        hour += 12;
+      }
+      if ((period === "上午" || period === "早上") && hour === 12) {
+        hour = 0;
+      }
+      if (period === "中午" && hour < 11) {
+        hour += 12;
+      }
+
       return {
-        date,
-        dateKey: toDateKey(date),
-        label: weekMatch[0],
-        matchedText: weekMatch[0],
-        matchIndex: weekMatch.index
+        value: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
+        matchedText: match[0].trim(),
+        matchIndex: match.index
       };
     }
 
@@ -428,7 +476,7 @@
     allItems
       .filter(shouldDisplayItem)
       .sort((a, b) => {
-        const dateOrder = a.dueDate.localeCompare(b.dueDate);
+        const dateOrder = getSortTime(a) - getSortTime(b);
         return dateOrder || a.title.localeCompare(b.title, "zh-CN");
       })
       .forEach((item) => {
@@ -444,6 +492,7 @@
     counts.total.textContent = String(
       grouped.today.length + grouped.week.length + grouped.future.length
     );
+    checkDueReminders();
   }
 
   function loadAllExtractedItems() {
@@ -525,11 +574,13 @@
 
     checkbox.checked = Boolean(state.done);
     title.textContent = normalizeReminderTitle(item);
-    date.textContent = `${formatCompactDate(fromDateKey(item.dueDate))} · ${item.dateLabel}`;
-    date.dateTime = item.dueDate;
+    date.textContent = formatReminderDate(item);
+    date.dateTime = item.dueAt || item.dueDate;
 
     const dueDate = fromDateKey(item.dueDate);
-    if (dueDate < startOfToday() && !state.done) {
+    if (state.done && state.completedAt) {
+      status.textContent = formatCompletedAt(state.completedAt);
+    } else if (dueDate < startOfToday() && !state.done) {
       status.textContent = "已逾期";
       status.classList.add("overdue");
     } else if (dueDate.getTime() === startOfToday().getTime()) {
@@ -538,9 +589,11 @@
 
     label.classList.toggle("done", Boolean(state.done));
     checkbox.addEventListener("change", () => {
+      const timestamp = new Date().toISOString();
       taskStates[item.id] = {
         done: checkbox.checked,
-        updatedAt: new Date().toISOString()
+        updatedAt: timestamp,
+        completedAt: checkbox.checked ? timestamp : null
       };
       window.localStorage.setItem(TASK_STATE_KEY, JSON.stringify(taskStates));
       renderAllReminders();
@@ -797,6 +850,109 @@
     }
   }
 
+  async function requestReminderPermission() {
+    if (!("Notification" in window)) {
+      showInPageReminder("当前浏览器不支持系统通知。");
+      return;
+    }
+
+    const permission = await Notification.requestPermission();
+    updateReminderButton();
+
+    if (permission === "granted") {
+      showInPageReminder("提醒已开启。应用打开期间会进行到点提醒。");
+      checkDueReminders();
+    } else {
+      showInPageReminder("通知权限未开启。");
+    }
+  }
+
+  function updateReminderButton() {
+    if (!enableReminderBtn) return;
+
+    if (!("Notification" in window)) {
+      enableReminderBtn.textContent = "提醒不可用";
+      enableReminderBtn.disabled = true;
+      return;
+    }
+
+    enableReminderBtn.textContent =
+      Notification.permission === "granted" ? "提醒已开启" : "开启提醒";
+  }
+
+  function startReminderLoop() {
+    window.clearInterval(reminderTimer);
+    reminderTimer = window.setInterval(checkDueReminders, 30000);
+    checkDueReminders();
+  }
+
+  function checkDueReminders() {
+    const currentTime = Date.now();
+    const dueItems = loadAllExtractedItems().filter((item) => {
+      const state = taskStates[item.id];
+      if (!item.dueAt || (state && state.done)) return false;
+
+      const reminderKey = `${item.id}|${item.dueAt}`;
+      if (notifiedReminders.has(reminderKey)) return false;
+
+      return new Date(item.dueAt).getTime() <= currentTime;
+    });
+
+    dueItems.forEach((item) => {
+      const reminderKey = `${item.id}|${item.dueAt}`;
+      notifiedReminders.add(reminderKey);
+      notifyReminder(item);
+    });
+  }
+
+  async function notifyReminder(item) {
+    const title = "DDL 到点提醒";
+    const body = `${formatReminderDate(item)} ${normalizeReminderTitle(item)}`;
+
+    if ("Notification" in window && Notification.permission === "granted") {
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        if (registration && registration.showNotification) {
+          registration.showNotification(title, {
+            body,
+            tag: item.id,
+            renotify: true,
+            icon: "icons/icon-192.png"
+          });
+          return;
+        }
+      } catch {
+        // Fall back to the in-page reminder.
+      }
+
+      try {
+        new Notification(title, { body, tag: item.id });
+        return;
+      } catch {
+        // Fall back to the in-page reminder.
+      }
+    }
+
+    showInPageReminder(`${title}：${body}`);
+  }
+
+  function showInPageReminder(message) {
+    let toast = document.getElementById("reminderToast");
+    if (!toast) {
+      toast = document.createElement("div");
+      toast.id = "reminderToast";
+      toast.className = "reminder-toast";
+      document.body.appendChild(toast);
+    }
+
+    toast.textContent = message;
+    toast.classList.add("show");
+    window.clearTimeout(showInPageReminder.timer);
+    showInPageReminder.timer = window.setTimeout(() => {
+      toast.classList.remove("show");
+    }, 4500);
+  }
+
   function showSaveStatus(message) {
     saveStatus.textContent = message;
     saveStatus.style.opacity = "1";
@@ -943,6 +1099,16 @@
     return `${text.slice(0, index)}${text.slice(index + matchedText.length)}`;
   }
 
+  function removeMatchedTime(text, dateResult) {
+    const matchedText = dateResult.timeMatchedText;
+    if (!matchedText) return text;
+
+    const index = text.indexOf(matchedText);
+    if (index < 0) return text;
+
+    return `${text.slice(0, index)}${text.slice(index + matchedText.length)}`;
+  }
+
   function cleanTaskTitle(title) {
     let result = title.trim();
     const leadingNumberPattern =
@@ -1045,6 +1211,45 @@
     }).format(date);
   }
 
+  function formatReminderDate(item) {
+    const date = fromDateKey(item.dueDate);
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+
+    if (item.dueTime) {
+      return `${month}.${day} ${item.dueTime}`;
+    }
+
+    return `${formatCompactDate(date)} · ${item.dateLabel}`;
+  }
+
+  function formatCompletedAt(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "已完成";
+
+    const time = `${String(date.getHours()).padStart(2, "0")}:${String(
+      date.getMinutes()
+    ).padStart(2, "0")}`;
+
+    if (startOfDay(date).getTime() === startOfToday().getTime()) {
+      return `完成于 ${time}`;
+    }
+
+    return `完成于 ${date.getMonth() + 1}.${String(date.getDate()).padStart(
+      2,
+      "0"
+    )} ${time}`;
+  }
+
+  function getSortTime(item) {
+    if (item.dueAt) {
+      const dueAt = new Date(item.dueAt).getTime();
+      if (!Number.isNaN(dueAt)) return dueAt;
+    }
+
+    return fromDateKey(item.dueDate).getTime();
+  }
+
   function createStableId(value) {
     let hash = 2166136261;
     for (let index = 0; index < value.length; index += 1) {
@@ -1059,7 +1264,7 @@
 
     window.addEventListener("load", () => {
       navigator.serviceWorker
-        .register("./sw.js?v=11", { updateViaCache: "none" })
+        .register("./sw.js?v=12", { updateViaCache: "none" })
         .then((registration) => registration.update())
         .catch(() => {
           // file:// and non-secure origins do not support service workers.

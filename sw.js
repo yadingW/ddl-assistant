@@ -1,9 +1,9 @@
-const CACHE_NAME = "work-note-v11";
+const CACHE_NAME = "work-note-v12";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./style.css?v=11",
-  "./app.js?v=11",
+  "./style.css?v=12",
+  "./app.js?v=12",
   "./manifest.json",
   "./icons/icon.svg",
   "./icons/icon-192.png",
@@ -43,5 +43,17 @@ self.addEventListener("fetch", (event) => {
         return response;
       })
       .catch(() => caches.match(event.request))
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      if (clientList.length > 0) {
+        return clientList[0].focus();
+      }
+      return clients.openWindow("./index.html");
+    })
   );
 });

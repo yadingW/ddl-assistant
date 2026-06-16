@@ -8,7 +8,7 @@
     <title>工作便签本</title>
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=11">
+    <link rel="stylesheet" href="style.css?v=12">
   </head>
   <body>
     <main class="workspace">
@@ -50,6 +50,7 @@
           <span class="footer-actions">
             <button id="exportBackupBtn" class="footer-link" type="button">导出备份</button>
             <button id="importBackupBtn" class="footer-link" type="button">恢复备份</button>
+            <button id="enableReminderBtn" class="footer-link" type="button">开启提醒</button>
             <span>自动保存</span>
           </span>
           <input id="backupFileInput" type="file" accept=".json,application/json" hidden>
@@ -146,6 +147,6 @@
       <p class="empty-state">暂无提醒</p>
     </template>
 
-    <script src="app.js?v=11"></script>
+    <script src="app.js?v=12"></script>
   </body>
 </html>
