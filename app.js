@@ -474,10 +474,8 @@
     const grouped = { today: [], week: [], future: [], archive: [] };
 
     allItems
-      .filter(shouldDisplayItem)
       .sort((a, b) => {
-        const dateOrder = getSortTime(a) - getSortTime(b);
-        return dateOrder || a.title.localeCompare(b.title, "zh-CN");
+        return compareReminderItems(a, b);
       })
       .forEach((item) => {
         grouped[getDateGroup(item)].push(item);
@@ -513,13 +511,6 @@
     }
 
     return Array.from(itemMap.values());
-  }
-
-  function shouldDisplayItem(item) {
-    const state = taskStates[item.id];
-    if (!state || !state.done) return true;
-
-    return item.sourceWeek === currentWeek.id || item.sourceType === "long-term";
   }
 
   function renderGroup(groupName, items) {
@@ -692,6 +683,20 @@
     if (dueDate <= today) return "today";
     if (dueDate <= endOfIsoWeek(today)) return "week";
     return "future";
+  }
+
+  function compareReminderItems(a, b) {
+    const groupA = getDateGroup(a);
+    const groupB = getDateGroup(b);
+
+    if (groupA === groupB) {
+      const doneA = Boolean(taskStates[a.id] && taskStates[a.id].done);
+      const doneB = Boolean(taskStates[b.id] && taskStates[b.id].done);
+      if (doneA !== doneB) return doneA ? 1 : -1;
+    }
+
+    const dateOrder = getSortTime(a) - getSortTime(b);
+    return dateOrder || a.title.localeCompare(b.title, "zh-CN");
   }
 
   function openPreviousWeekDrawer(focusCloseButton = true) {
@@ -1264,7 +1269,7 @@
 
     window.addEventListener("load", () => {
       navigator.serviceWorker
-        .register("./sw.js?v=12", { updateViaCache: "none" })
+        .register("./sw.js?v=14", { updateViaCache: "none" })
         .then((registration) => registration.update())
         .catch(() => {
           // file:// and non-secure origins do not support service workers.
