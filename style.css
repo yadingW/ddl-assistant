@@ -236,6 +236,26 @@ h1 {
   padding: 0 6px 22px;
 }
 
+.sidebar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.sidebar-link {
+  border: 0;
+  padding: 2px 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.sidebar-link:hover {
+  color: var(--accent);
+}
+
 .sidebar-header h2,
 .drawer-header h2 {
   font-size: 16px;
@@ -360,6 +380,10 @@ h1 {
   color: var(--danger);
 }
 
+.ddl-item.overdue .ddl-date {
+  color: var(--danger);
+}
+
 .ddl-item.done .ddl-title {
   color: #929a9e;
   text-decoration: line-through;
@@ -369,6 +393,29 @@ h1 {
   padding: 12px 6px 8px 24px;
   color: #9aa2a6;
   font-size: 12px;
+}
+
+.today-block {
+  display: grid;
+  gap: 2px;
+  padding-bottom: 8px;
+}
+
+.today-block + .today-block {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.today-subheading,
+.followup-person {
+  padding: 6px 6px 4px 24px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.followup-person {
+  padding-top: 10px;
 }
 
 .archive-panel {
@@ -563,5 +610,10 @@ body.drawer-open {
   .footer-actions {
     flex-wrap: wrap;
     gap: 8px;
+  }
+
+  .sidebar-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 }

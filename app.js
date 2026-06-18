@@ -7,7 +7,7 @@
   const LONG_TERM_EXTRACTED_KEY = `${EXTRACTED_PREFIX}long_term`;
   const TASK_STATE_KEY = "workspace_task_states";
   const PARSER_VERSION_KEY = "workspace_parser_version";
-  const PARSER_VERSION = "7";
+  const PARSER_VERSION = "8";
   const LEGACY_TASK_KEY = "ddl-assistant.tasks.v1";
   const EXTRACT_DELAY = 320;
 
@@ -27,6 +27,7 @@
   const exportBackupBtn = document.getElementById("exportBackupBtn");
   const importBackupBtn = document.getElementById("importBackupBtn");
   const enableReminderBtn = document.getElementById("enableReminderBtn");
+  const copyFollowUpsBtn = document.getElementById("copyFollowUpsBtn");
   const backupFileInput = document.getElementById("backupFileInput");
 
   const lists = {
@@ -89,6 +90,7 @@
     exportBackupBtn.addEventListener("click", exportBackup);
     importBackupBtn.addEventListener("click", () => backupFileInput.click());
     enableReminderBtn.addEventListener("click", requestReminderPermission);
+    copyFollowUpsBtn.addEventListener("click", copyTodayFollowUps);
     backupFileInput.addEventListener("change", importBackup);
 
     document.addEventListener("keydown", (event) => {
@@ -267,6 +269,23 @@
         return;
       }
 
+      const followUp = parseFollowUpLine(taskText, referenceDate);
+      if (followUp) {
+        addExtractedItem({
+          items,
+          sourceId,
+          sourceType,
+          sourceLine: line,
+          lineIndex,
+          currentPrefix: currentContext,
+          title: followUp.title,
+          dateResult: followUp.dateResult,
+          type: "followUp",
+          waitingOn: followUp.waitingOn
+        });
+        return;
+      }
+
       if (dateResult) {
         const titleWithoutDate = cleanTaskTitle(
           removeMatchedTime(removeMatchedDate(taskText, dateResult), dateResult)
@@ -320,7 +339,9 @@
       lineIndex,
       currentPrefix,
       title,
-      dateResult
+      dateResult,
+      type = "task",
+      waitingOn = ""
     } = options;
     const displayTitle = currentPrefix
       ? `[${currentPrefix}] ${title}`
@@ -334,15 +355,45 @@
       title: displayTitle,
       sourceLine,
       lineIndex,
+      type,
+      waitingOn,
       contextPrefix: currentPrefix,
       dueDate: dateResult.dateKey,
       dueTime: dateResult.dueTime || null,
       dueAt: dateResult.dueAt || null,
+      followUpDate: type === "followUp" ? dateResult.dateKey : null,
+      followUpTime: type === "followUp" ? dateResult.dueTime || null : null,
+      followUpAt: type === "followUp" ? dateResult.dueAt || null : null,
       dateLabel: dateResult.label,
       sourceId,
       sourceType,
       sourceWeek: sourceType === "weekly" ? sourceId : null
     });
+  }
+
+  function parseFollowUpLine(text, referenceDate) {
+    if (!/^>\s*/.test(text)) return null;
+
+    const body = text.replace(/^>\s*/, "").trim();
+    const dateResult = parseDateExpression(body, referenceDate);
+    if (!dateResult || !Number.isInteger(dateResult.matchIndex)) return null;
+
+    const waitingOn = cleanTaskTitle(body.slice(0, dateResult.matchIndex));
+    if (!waitingOn) return null;
+
+    const titleSource = body.slice(dateResult.matchIndex);
+    const title = cleanTaskTitle(
+      removeMatchedTime(removeMatchedDate(titleSource, {
+        ...dateResult,
+        matchIndex: 0
+      }), dateResult)
+    );
+
+    return {
+      waitingOn,
+      title: title || "催办",
+      dateResult
+    };
   }
 
   function parseDateExpression(text, referenceDate) {
@@ -517,6 +568,11 @@
     const list = lists[groupName];
     list.replaceChildren();
 
+    if (groupName === "today") {
+      renderTodayGroup(list, items);
+      return;
+    }
+
     if (!items.length) {
       list.appendChild(document.getElementById("emptyTemplate").content.cloneNode(true));
       return;
@@ -525,6 +581,67 @@
     items.forEach((item) => {
       list.appendChild(createReminderElement(item));
     });
+  }
+
+  function renderTodayGroup(list, items) {
+    const tasks = items.filter((item) => !isFollowUp(item));
+    const followUps = items.filter(isFollowUp);
+
+    if (!tasks.length && !followUps.length) {
+      list.appendChild(document.getElementById("emptyTemplate").content.cloneNode(true));
+      return;
+    }
+
+    const taskBlock = createTodayBlock("今日要做");
+    if (tasks.length) {
+      tasks.forEach((item) => taskBlock.appendChild(createReminderElement(item)));
+    } else {
+      taskBlock.appendChild(createInlineEmpty("暂无要做"));
+    }
+    list.appendChild(taskBlock);
+
+    const followUpBlock = createTodayBlock("今日待催");
+    if (followUps.length) {
+      const grouped = groupByWaitingOn(followUps);
+      Object.keys(grouped).forEach((waitingOn) => {
+        const heading = document.createElement("div");
+        heading.className = "followup-person";
+        heading.textContent = waitingOn;
+        followUpBlock.appendChild(heading);
+        grouped[waitingOn].forEach((item) => {
+          followUpBlock.appendChild(createReminderElement(item));
+        });
+      });
+    } else {
+      followUpBlock.appendChild(createInlineEmpty("暂无待催"));
+    }
+    list.appendChild(followUpBlock);
+  }
+
+  function createTodayBlock(title) {
+    const block = document.createElement("section");
+    const heading = document.createElement("div");
+    block.className = "today-block";
+    heading.className = "today-subheading";
+    heading.textContent = title;
+    block.appendChild(heading);
+    return block;
+  }
+
+  function createInlineEmpty(text) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = text;
+    return empty;
+  }
+
+  function groupByWaitingOn(items) {
+    return items.reduce((result, item) => {
+      const key = item.waitingOn || "未指定对象";
+      if (!result[key]) result[key] = [];
+      result[key].push(item);
+      return result;
+    }, {});
   }
 
   function createArchiveView() {
@@ -562,23 +679,20 @@
     const date = fragment.querySelector(".ddl-date");
     const status = fragment.querySelector(".ddl-status");
     const state = taskStates[item.id] || { done: false };
+    const isDone = Boolean(state.done);
+    const isOverdue = fromDateKey(getItemDateKey(item)) < startOfToday();
 
-    checkbox.checked = Boolean(state.done);
+    checkbox.checked = isDone;
     title.textContent = normalizeReminderTitle(item);
     date.textContent = formatReminderDate(item);
-    date.dateTime = item.dueAt || item.dueDate;
+    date.dateTime = getItemAt(item) || getItemDateKey(item);
 
-    const dueDate = fromDateKey(item.dueDate);
-    if (state.done && state.completedAt) {
+    if (isDone && state.completedAt) {
       status.textContent = formatCompletedAt(state.completedAt);
-    } else if (dueDate < startOfToday() && !state.done) {
-      status.textContent = "已逾期";
-      status.classList.add("overdue");
-    } else if (dueDate.getTime() === startOfToday().getTime()) {
-      status.textContent = "今天";
     }
 
-    label.classList.toggle("done", Boolean(state.done));
+    label.classList.toggle("done", isDone);
+    label.classList.toggle("overdue", isOverdue && !isDone);
     checkbox.addEventListener("change", () => {
       const timestamp = new Date().toISOString();
       taskStates[item.id] = {
@@ -676,13 +790,38 @@
 
   function getDateGroup(item) {
     const today = startOfToday();
-    const dueDate = fromDateKey(item.dueDate);
-    const done = Boolean(taskStates[item.id] && taskStates[item.id].done);
+    const dueDate = fromDateKey(getItemDateKey(item));
+    const state = taskStates[item.id] || {};
+    const done = Boolean(state.done);
 
-    if (dueDate < today && done) return "archive";
+    if (done) {
+      const completedDate = state.completedAt ? startOfDay(new Date(state.completedAt)) : null;
+      if (completedDate && !Number.isNaN(completedDate.getTime())) {
+        if (completedDate < today) return "archive";
+      } else if (dueDate < today) {
+        return "archive";
+      }
+    }
+
     if (dueDate <= today) return "today";
     if (dueDate <= endOfIsoWeek(today)) return "week";
     return "future";
+  }
+
+  function isFollowUp(item) {
+    return item && item.type === "followUp";
+  }
+
+  function getItemDateKey(item) {
+    return isFollowUp(item) && item.followUpDate ? item.followUpDate : item.dueDate;
+  }
+
+  function getItemTime(item) {
+    return isFollowUp(item) ? item.followUpTime || null : item.dueTime || null;
+  }
+
+  function getItemAt(item) {
+    return isFollowUp(item) ? item.followUpAt || item.dueAt || null : item.dueAt || null;
   }
 
   function compareReminderItems(a, b) {
@@ -738,9 +877,50 @@
       return;
     }
 
-    archiveItems.forEach((item) => {
-      archiveDrawerList.appendChild(createReminderElement(item));
+    const grouped = groupArchiveItems(archiveItems);
+    ["本周", "上周", "更早周次"].forEach((label) => {
+      if (!grouped[label].length) return;
+      const heading = document.createElement("div");
+      heading.className = "today-subheading";
+      heading.textContent = label;
+      archiveDrawerList.appendChild(heading);
+      grouped[label].forEach((item) => {
+        archiveDrawerList.appendChild(createReminderElement(item));
+      });
     });
+  }
+
+  function groupArchiveItems(items) {
+    const result = {
+      本周: [],
+      上周: [],
+      更早周次: []
+    };
+    const thisWeekStart = startOfIsoWeek(startOfToday());
+    const lastWeekStart = addDays(thisWeekStart, -7);
+
+    items.forEach((item) => {
+      const date = getArchiveReferenceDate(item);
+      if (date >= thisWeekStart) {
+        result["本周"].push(item);
+      } else if (date >= lastWeekStart) {
+        result["上周"].push(item);
+      } else {
+        result["更早周次"].push(item);
+      }
+    });
+
+    return result;
+  }
+
+  function getArchiveReferenceDate(item) {
+    const state = taskStates[item.id] || {};
+    const completed = state.completedAt ? new Date(state.completedAt) : null;
+    if (completed && !Number.isNaN(completed.getTime())) {
+      return startOfDay(completed);
+    }
+
+    return fromDateKey(getItemDateKey(item));
   }
 
   function savePreviousWeekNote(event) {
@@ -853,6 +1033,55 @@
       window.alert("恢复失败：请选择由本应用导出的 JSON 备份文件。");
       backupFileInput.value = "";
     }
+  }
+
+  async function copyTodayFollowUps() {
+    const today = startOfToday();
+    const followUps = loadAllExtractedItems()
+      .filter((item) => {
+        const state = taskStates[item.id];
+        return (
+          isFollowUp(item) &&
+          !(state && state.done) &&
+          fromDateKey(getItemDateKey(item)) <= today
+        );
+      })
+      .sort(compareReminderItems);
+
+    if (!followUps.length) {
+      showInPageReminder("今天没有未处理待催。");
+      return;
+    }
+
+    const grouped = groupByWaitingOn(followUps);
+    const text = Object.keys(grouped)
+      .map((waitingOn) => {
+        const lines = grouped[waitingOn].map(
+          (item) => `- ${normalizeReminderTitle(item)}（${formatReminderDate(item)}）`
+        );
+        return `${waitingOn}\n${lines.join("\n")}`;
+      })
+      .join("\n\n");
+
+    try {
+      await navigator.clipboard.writeText(text);
+      showInPageReminder("今日待催已复制。");
+    } catch {
+      fallbackCopyText(text);
+      showInPageReminder("今日待催已复制。");
+    }
+  }
+
+  function fallbackCopyText(text) {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    textarea.remove();
   }
 
   async function requestReminderPermission() {
@@ -1217,6 +1446,41 @@
   }
 
   function formatReminderDate(item) {
+    const date = fromDateKey(getItemDateKey(item));
+    const time = getItemTime(item);
+    const label = formatDateStatusLabel(date);
+    const waitingOn = isFollowUp(item) && item.waitingOn ? `${item.waitingOn} · ` : "";
+
+    if (isSameDay(date, startOfToday())) {
+      return `${waitingOn}${time ? `${time} · ` : ""}${formatWeekday(date)} · 今天`;
+    }
+
+    if (date < startOfToday()) {
+      return `${waitingOn}${formatMonthDay(date)} · ${formatWeekday(date)} · 已逾期`;
+    }
+
+    return `${waitingOn}${formatMonthDay(date)} · ${formatWeekday(date)}${time ? ` ${time}` : ""}`;
+  }
+
+  function formatDateStatusLabel(date) {
+    if (isSameDay(date, startOfToday())) return "今天";
+    if (date < startOfToday()) return "已逾期";
+    return "";
+  }
+
+  function formatMonthDay(date) {
+    return `${date.getMonth() + 1}.${String(date.getDate()).padStart(2, "0")}`;
+  }
+
+  function formatWeekday(date) {
+    return ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][date.getDay()];
+  }
+
+  function isSameDay(a, b) {
+    return startOfDay(a).getTime() === startOfDay(b).getTime();
+  }
+
+  function formatReminderDateLegacy(item) {
     const date = fromDateKey(item.dueDate);
     const month = date.getMonth() + 1;
     const day = date.getDate();
@@ -1230,29 +1494,30 @@
 
   function formatCompletedAt(value) {
     const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "已完成";
+    if (Number.isNaN(date.getTime())) return "已处理";
 
     const time = `${String(date.getHours()).padStart(2, "0")}:${String(
       date.getMinutes()
     ).padStart(2, "0")}`;
 
     if (startOfDay(date).getTime() === startOfToday().getTime()) {
-      return `完成于 ${time}`;
+      return `处理于 ${time}`;
     }
 
-    return `完成于 ${date.getMonth() + 1}.${String(date.getDate()).padStart(
+    return `处理于 ${date.getMonth() + 1}.${String(date.getDate()).padStart(
       2,
       "0"
     )} ${time}`;
   }
 
   function getSortTime(item) {
-    if (item.dueAt) {
-      const dueAt = new Date(item.dueAt).getTime();
+    const itemAt = getItemAt(item);
+    if (itemAt) {
+      const dueAt = new Date(itemAt).getTime();
       if (!Number.isNaN(dueAt)) return dueAt;
     }
 
-    return fromDateKey(item.dueDate).getTime();
+    return fromDateKey(getItemDateKey(item)).getTime();
   }
 
   function createStableId(value) {
@@ -1269,7 +1534,7 @@
 
     window.addEventListener("load", () => {
       navigator.serviceWorker
-        .register("./sw.js?v=14", { updateViaCache: "none" })
+        .register("./sw.js?v=16", { updateViaCache: "none" })
         .then((registration) => registration.update())
         .catch(() => {
           // file:// and non-secure origins do not support service workers.

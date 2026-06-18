@@ -8,7 +8,7 @@
     <title>工作便签本</title>
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=14">
+    <link rel="stylesheet" href="style.css?v=16">
   </head>
   <body>
     <main class="workspace">
@@ -63,7 +63,10 @@
             <h2 id="ddlTitle">DDL 提醒</h2>
             <p>从随记中静默提取</p>
           </div>
-          <span id="ddlCount" class="count-badge">0</span>
+          <div class="sidebar-actions">
+            <button id="copyFollowUpsBtn" class="sidebar-link" type="button">复制今日待催</button>
+            <span id="ddlCount" class="count-badge">0</span>
+          </div>
         </header>
 
         <details class="ddl-group" open>
@@ -147,6 +150,6 @@
       <p class="empty-state">暂无提醒</p>
     </template>
 
-    <script src="app.js?v=14"></script>
+    <script src="app.js?v=16"></script>
   </body>
 </html>
