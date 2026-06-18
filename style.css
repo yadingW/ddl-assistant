@@ -380,10 +380,6 @@ h1 {
   color: var(--danger);
 }
 
-.ddl-item.overdue .ddl-date {
-  color: var(--danger);
-}
-
 .ddl-item.done .ddl-title {
   color: #929a9e;
   text-decoration: line-through;

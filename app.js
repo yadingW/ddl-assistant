@@ -679,20 +679,23 @@
     const date = fragment.querySelector(".ddl-date");
     const status = fragment.querySelector(".ddl-status");
     const state = taskStates[item.id] || { done: false };
-    const isDone = Boolean(state.done);
-    const isOverdue = fromDateKey(getItemDateKey(item)) < startOfToday();
 
-    checkbox.checked = isDone;
+    checkbox.checked = Boolean(state.done);
     title.textContent = normalizeReminderTitle(item);
     date.textContent = formatReminderDate(item);
     date.dateTime = getItemAt(item) || getItemDateKey(item);
 
-    if (isDone && state.completedAt) {
+    const dueDate = fromDateKey(getItemDateKey(item));
+    if (state.done && state.completedAt) {
       status.textContent = formatCompletedAt(state.completedAt);
+    } else if (dueDate < startOfToday() && !state.done) {
+      status.textContent = "已逾期";
+      status.classList.add("overdue");
+    } else if (dueDate.getTime() === startOfToday().getTime()) {
+      status.textContent = "今天";
     }
 
-    label.classList.toggle("done", isDone);
-    label.classList.toggle("overdue", isOverdue && !isDone);
+    label.classList.toggle("done", Boolean(state.done));
     checkbox.addEventListener("change", () => {
       const timestamp = new Date().toISOString();
       taskStates[item.id] = {
@@ -1534,7 +1537,7 @@
 
     window.addEventListener("load", () => {
       navigator.serviceWorker
-        .register("./sw.js?v=16", { updateViaCache: "none" })
+        .register("./sw.js?v=15", { updateViaCache: "none" })
         .then((registration) => registration.update())
         .catch(() => {
           // file:// and non-secure origins do not support service workers.
