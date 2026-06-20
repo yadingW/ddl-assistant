@@ -51,6 +51,18 @@ http://localhost:8000/
 
 也可以双击项目中的 `start-app.cmd` 启动本地服务。
 
+## 本地一键启动
+
+Windows 用户可以双击 `start-app.cmd` 启动本地服务器并自动打开应用。
+
+服务运行期间，代码修改后只需刷新浏览器；缓存未更新时可使用 `Ctrl+F5`。
+
+也可以右键 `start-app.cmd`，为其创建桌面快捷方式。
+
+## 测试
+
+V1.0 发布前的人工验收项目见 [TESTING.md](TESTING.md)。
+
 ## 文件结构
 
 - `index.html`：页面结构。

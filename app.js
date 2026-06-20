@@ -56,6 +56,7 @@
   let taskStates = loadJson(TASK_STATE_KEY, {});
   const notifiedReminders = new Set();
   const composingInputs = new Set();
+  let storageErrorShownAt = 0;
 
   initialize();
 
@@ -115,17 +116,20 @@
   }
 
   function handleNoteInput(event) {
-    window.localStorage.setItem(currentNoteKey, noteInput.value);
+    if (safeSetItem(currentNoteKey, noteInput.value)) {
+      showSaveStatus("已保存");
+    }
     if (!event || !event.isComposing) scheduleExtraction();
   }
 
   function handleLongTermInput(event) {
-    window.localStorage.setItem(LONG_TERM_NOTE_KEY, longTermInput.value);
+    if (safeSetItem(LONG_TERM_NOTE_KEY, longTermInput.value)) {
+      showSaveStatus("已保存");
+    }
     if (!event || !event.isComposing) scheduleExtraction();
   }
 
   function scheduleExtraction() {
-    showSaveStatus("已保存");
     window.clearTimeout(extractTimer);
     extractTimer = window.setTimeout(() => {
       if (composingInputs.size) return;
@@ -169,7 +173,7 @@
       mapSelectionPosition(selectionStart, replacements),
       mapSelectionPosition(selectionEnd, replacements)
     );
-    window.localStorage.setItem(storageKey, anchored);
+    safeSetItem(storageKey, anchored);
   }
 
   function mapSelectionPosition(position, replacements) {
@@ -196,7 +200,7 @@
       sourceType: "weekly",
       referenceDate: startOfToday()
     });
-    window.localStorage.setItem(currentExtractedKey, JSON.stringify(items));
+    safeSetItem(currentExtractedKey, JSON.stringify(items));
   }
 
   function updateWeeklyExtraction(weekId, text) {
@@ -207,7 +211,7 @@
       referenceDate
     });
 
-    window.localStorage.setItem(
+    safeSetItem(
       `${EXTRACTED_PREFIX}${weekId}`,
       JSON.stringify(items)
     );
@@ -219,7 +223,7 @@
       sourceType: "long-term",
       referenceDate: startOfToday()
     });
-    window.localStorage.setItem(LONG_TERM_EXTRACTED_KEY, JSON.stringify(items));
+    safeSetItem(LONG_TERM_EXTRACTED_KEY, JSON.stringify(items));
   }
 
   function rebuildExtractionCaches() {
@@ -237,7 +241,7 @@
       }
     }
 
-    extractedKeys.forEach((key) => window.localStorage.removeItem(key));
+    extractedKeys.forEach((key) => safeRemoveItem(key));
 
     noteEntries.forEach(([key, text]) => {
       const sourceId = key.slice(NOTE_PREFIX.length);
@@ -251,14 +255,14 @@
         referenceDate
       });
 
-      window.localStorage.setItem(
+      safeSetItem(
         `${EXTRACTED_PREFIX}${sourceId}`,
         JSON.stringify(items)
       );
     });
 
     updateLongTermExtraction();
-    window.localStorage.setItem(PARSER_VERSION_KEY, PARSER_VERSION);
+    safeSetItem(PARSER_VERSION_KEY, PARSER_VERSION);
   }
 
   function extractDdlItems(text, options) {
@@ -728,12 +732,21 @@
     label.classList.toggle("done", Boolean(state.done));
     checkbox.addEventListener("change", () => {
       const timestamp = new Date().toISOString();
-      taskStates[item.id] = {
+      const previousState = taskStates[item.id];
+      const nextState = {
         done: checkbox.checked,
         updatedAt: timestamp,
         completedAt: checkbox.checked ? timestamp : null
       };
-      window.localStorage.setItem(TASK_STATE_KEY, JSON.stringify(taskStates));
+      taskStates[item.id] = nextState;
+
+      if (!safeSetItem(TASK_STATE_KEY, JSON.stringify(taskStates))) {
+        if (previousState) {
+          taskStates[item.id] = previousState;
+        } else {
+          delete taskStates[item.id];
+        }
+      }
       renderAllReminders();
     });
 
@@ -959,7 +972,7 @@
   function savePreviousWeekNote(event) {
     const save = () => {
       const key = `${NOTE_PREFIX}${previousWeek.id}`;
-      window.localStorage.setItem(key, previousWeekContent.value);
+      if (!safeSetItem(key, previousWeekContent.value)) return;
       updateWeeklyExtraction(previousWeek.id, previousWeekContent.value);
       renderAllReminders();
       showSaveStatus("已保存");
@@ -1044,26 +1057,29 @@
 
     try {
       const parsed = JSON.parse(await file.text());
-      if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
-        throw new Error("invalid backup");
-      }
-
-      const entries = Object.entries(parsed).filter(
-        ([key, value]) =>
-          key.startsWith("workspace_") && typeof value === "string"
+      const entries = validateBackupEntries(parsed);
+      const previousValues = new Map(
+        entries.map(([key]) => [key, window.localStorage.getItem(key)])
       );
-      if (!entries.length) {
-        throw new Error("empty backup");
-      }
+      const writtenKeys = [];
 
-      entries.forEach(([key, value]) => {
-        window.localStorage.setItem(key, value);
-      });
+      try {
+        for (const [key, value] of entries) {
+          if (!safeSetItem(key, value, { silent: true })) {
+            throw new Error("storage write failed");
+          }
+          writtenKeys.push(key);
+        }
+      } catch (error) {
+        rollbackImportedEntries(writtenKeys, previousValues);
+        notifyStorageWriteFailure();
+        throw error;
+      }
 
       window.alert("恢复成功，页面将重新加载。");
       window.location.reload();
     } catch {
-      window.alert("恢复失败：请选择由本应用导出的 JSON 备份文件。");
+      window.alert("恢复失败：备份无效或浏览器存储写入失败，原有数据未被覆盖。");
       backupFileInput.value = "";
     }
   }
@@ -1229,6 +1245,106 @@
     }, 900);
   }
 
+  function clearSaveStatus() {
+    window.clearTimeout(showSaveStatus.timer);
+    saveStatus.textContent = "";
+    saveStatus.style.opacity = "0";
+  }
+
+  function safeSetItem(key, value, options = {}) {
+    try {
+      window.localStorage.setItem(key, value);
+      return true;
+    } catch {
+      if (!options.silent) notifyStorageWriteFailure();
+      return false;
+    }
+  }
+
+  function safeRemoveItem(key) {
+    try {
+      window.localStorage.removeItem(key);
+      return true;
+    } catch {
+      notifyStorageWriteFailure();
+      return false;
+    }
+  }
+
+  function notifyStorageWriteFailure() {
+    clearSaveStatus();
+    const now = Date.now();
+    if (now - storageErrorShownAt < 4500) return;
+
+    storageErrorShownAt = now;
+    showInPageReminder("保存失败，请立即导出备份并清理浏览器存储。");
+  }
+
+  function validateBackupEntries(backup) {
+    if (!isPlainObject(backup) || !Object.keys(backup).length) {
+      throw new Error("invalid backup root");
+    }
+
+    return Object.entries(backup).map(([key, value]) => {
+      if (!isAllowedBackupKey(key) || typeof value !== "string") {
+        throw new Error("invalid backup entry");
+      }
+      validateBackupValue(key, value);
+      return [key, value];
+    });
+  }
+
+  function isAllowedBackupKey(key) {
+    return (
+      key === LONG_TERM_NOTE_KEY ||
+      key === TASK_STATE_KEY ||
+      key === PARSER_VERSION_KEY ||
+      /^workspace_note_\d{4}_W\d{2}$/.test(key) ||
+      /^workspace_extracted_(?:\d{4}_W\d{2}|long_term)$/.test(key)
+    );
+  }
+
+  function validateBackupValue(key, value) {
+    if (key === TASK_STATE_KEY) {
+      const states = parseBackupJson(value);
+      if (!isPlainObject(states)) throw new Error("invalid task states");
+      return;
+    }
+
+    if (key.startsWith(EXTRACTED_PREFIX)) {
+      const items = parseBackupJson(value);
+      if (!Array.isArray(items)) throw new Error("invalid extracted items");
+    }
+  }
+
+  function parseBackupJson(value) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      throw new Error("invalid backup json value");
+    }
+  }
+
+  function rollbackImportedEntries(writtenKeys, previousValues) {
+    [...writtenKeys].reverse().forEach((key) => {
+      const previousValue = previousValues.get(key);
+      if (previousValue === null) {
+        safeRemoveItem(key);
+      } else {
+        safeSetItem(key, previousValue, { silent: true });
+      }
+    });
+  }
+
+  function isPlainObject(value) {
+    if (!value || Object.prototype.toString.call(value) !== "[object Object]") {
+      return false;
+    }
+
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  }
+
   function migrateLegacyTasks() {
     if (window.localStorage.getItem(currentNoteKey)) return;
 
@@ -1240,7 +1356,7 @@
       .map((task) => `${task.dueDate} ${task.title}`);
 
     if (lines.length) {
-      window.localStorage.setItem(currentNoteKey, lines.join("\n"));
+      safeSetItem(currentNoteKey, lines.join("\n"));
     }
   }
 
@@ -1553,7 +1669,7 @@
 
     window.addEventListener("load", () => {
       navigator.serviceWorker
-        .register("./sw.js?v=16", { updateViaCache: "none" })
+        .register("./sw.js?v=17", { updateViaCache: "none" })
         .then((registration) => registration.update())
         .catch(() => {
           // file:// and non-secure origins do not support service workers.
