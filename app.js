@@ -7,7 +7,7 @@
   const LONG_TERM_EXTRACTED_KEY = `${EXTRACTED_PREFIX}long_term`;
   const TASK_STATE_KEY = "workspace_task_states";
   const PARSER_VERSION_KEY = "workspace_parser_version";
-  const PARSER_VERSION = "8";
+  const PARSER_VERSION = "9";
   const LEGACY_TASK_KEY = "ddl-assistant.tasks.v1";
   const EXTRACT_DELAY = 320;
 
@@ -55,6 +55,7 @@
   let reminderTimer = null;
   let taskStates = loadJson(TASK_STATE_KEY, {});
   const notifiedReminders = new Set();
+  const composingInputs = new Set();
 
   initialize();
 
@@ -79,8 +80,8 @@
   }
 
   function bindEvents() {
-    noteInput.addEventListener("input", handleNoteInput);
-    longTermInput.addEventListener("input", handleLongTermInput);
+    bindWorkspaceInput(noteInput, handleNoteInput);
+    bindWorkspaceInput(longTermInput, handleLongTermInput);
     previousWeekContent.addEventListener("input", savePreviousWeekNote);
     previousWeekContent.addEventListener("blur", savePreviousWeekNote);
     previousWeekBtn.addEventListener("click", () => openPreviousWeekDrawer());
@@ -100,20 +101,34 @@
     });
   }
 
-  function handleNoteInput() {
-    window.localStorage.setItem(currentNoteKey, noteInput.value);
-    scheduleExtraction();
+  function bindWorkspaceInput(textarea, handler) {
+    textarea.addEventListener("compositionstart", () => {
+      composingInputs.add(textarea);
+    });
+    textarea.addEventListener("compositionend", () => {
+      composingInputs.delete(textarea);
+      handler();
+    });
+    textarea.addEventListener("input", (event) => {
+      handler(event);
+    });
   }
 
-  function handleLongTermInput() {
+  function handleNoteInput(event) {
+    window.localStorage.setItem(currentNoteKey, noteInput.value);
+    if (!event || !event.isComposing) scheduleExtraction();
+  }
+
+  function handleLongTermInput(event) {
     window.localStorage.setItem(LONG_TERM_NOTE_KEY, longTermInput.value);
-    scheduleExtraction();
+    if (!event || !event.isComposing) scheduleExtraction();
   }
 
   function scheduleExtraction() {
     showSaveStatus("已保存");
     window.clearTimeout(extractTimer);
     extractTimer = window.setTimeout(() => {
+      if (composingInputs.size) return;
       anchorRelativeDates(noteInput, currentNoteKey, startOfToday());
       anchorRelativeDates(longTermInput, LONG_TERM_NOTE_KEY, startOfToday());
       updateCurrentWeekExtraction();
@@ -127,7 +142,7 @@
     const selectionStart = textarea.selectionStart;
     const selectionEnd = textarea.selectionEnd;
     const tokenPattern =
-      /(下周[一二三四五六日天]|本周[一二三四五六日天]|这周[一二三四五六日天]|周[一二三四五六日天]|大后天|后天|明天|今天|今日|当天|本日)/g;
+      /(?:下周[一二三四五六日天]|本周[一二三四五六日天]|这周[一二三四五六日天]|周[一二三四五六日天]|大后天|后天|明天|今天|今日|当天|本日)/g;
     const replacements = [];
 
     const anchored = original.replace(tokenPattern, (token, offset) => {
@@ -158,20 +173,21 @@
   }
 
   function mapSelectionPosition(position, replacements) {
-    let mapped = position;
+    let delta = 0;
 
-    replacements.forEach((replacement) => {
+    for (const replacement of replacements) {
       const originalLength = replacement.end - replacement.start;
-      const delta = replacement.replacementLength - originalLength;
+      const replacementDelta = replacement.replacementLength - originalLength;
 
-      if (replacement.end <= position) {
-        mapped += delta;
-      } else if (replacement.start < position) {
-        mapped = replacement.start + replacement.replacementLength;
+      if (position < replacement.start) break;
+      if (position <= replacement.end) {
+        return Math.max(0, replacement.start + delta + replacement.replacementLength);
       }
-    });
 
-    return Math.max(0, mapped);
+      delta += replacementDelta;
+    }
+
+    return Math.max(0, position + delta);
   }
 
   function updateCurrentWeekExtraction() {
@@ -312,7 +328,10 @@
 
       if (!activeDate) return;
 
-      const inheritedTitle = cleanTaskTitle(taskText);
+      const inheritedDateResult = createInheritedDateResult(activeDate, taskText);
+      const inheritedTitle = cleanTaskTitle(
+        removeMatchedTime(taskText, inheritedDateResult)
+      );
       if (!inheritedTitle) return;
 
       addExtractedItem({
@@ -323,7 +342,7 @@
         lineIndex,
         currentPrefix: currentContext,
         title: inheritedTitle,
-        dateResult: activeDate
+        dateResult: inheritedDateResult
       });
     });
 
@@ -481,6 +500,19 @@
       dueAt: dueTime ? `${dateKey}T${dueTime}:00` : null,
       timeMatchedText: timeResult ? timeResult.matchedText : null,
       timeMatchIndex: timeResult ? timeResult.matchIndex : null
+    };
+  }
+
+  function createInheritedDateResult(activeDate, sourceText) {
+    const timeResult = parseTimeExpression(sourceText);
+    if (!timeResult) return activeDate;
+
+    return {
+      ...activeDate,
+      dueTime: timeResult.value,
+      dueAt: `${activeDate.dateKey}T${timeResult.value}:00`,
+      timeMatchedText: timeResult.matchedText,
+      timeMatchIndex: timeResult.matchIndex
     };
   }
 
@@ -689,10 +721,8 @@
     if (state.done && state.completedAt) {
       status.textContent = formatCompletedAt(state.completedAt);
     } else if (dueDate < startOfToday() && !state.done) {
-      status.textContent = "已逾期";
+      status.textContent = "· 已逾期";
       status.classList.add("overdue");
-    } else if (dueDate.getTime() === startOfToday().getTime()) {
-      status.textContent = "今天";
     }
 
     label.classList.toggle("done", Boolean(state.done));
@@ -1451,24 +1481,10 @@
   function formatReminderDate(item) {
     const date = fromDateKey(getItemDateKey(item));
     const time = getItemTime(item);
-    const label = formatDateStatusLabel(date);
     const waitingOn = isFollowUp(item) && item.waitingOn ? `${item.waitingOn} · ` : "";
-
-    if (isSameDay(date, startOfToday())) {
-      return `${waitingOn}${time ? `${time} · ` : ""}${formatWeekday(date)} · 今天`;
-    }
-
-    if (date < startOfToday()) {
-      return `${waitingOn}${formatMonthDay(date)} · ${formatWeekday(date)} · 已逾期`;
-    }
-
-    return `${waitingOn}${formatMonthDay(date)} · ${formatWeekday(date)}${time ? ` ${time}` : ""}`;
-  }
-
-  function formatDateStatusLabel(date) {
-    if (isSameDay(date, startOfToday())) return "今天";
-    if (date < startOfToday()) return "已逾期";
-    return "";
+    const parts = [waitingOn.replace(/ · $/, ""), formatMonthDay(date), formatWeekday(date)];
+    if (time) parts.push(time);
+    return parts.filter(Boolean).join(" · ");
   }
 
   function formatMonthDay(date) {
@@ -1537,7 +1553,7 @@
 
     window.addEventListener("load", () => {
       navigator.serviceWorker
-        .register("./sw.js?v=15", { updateViaCache: "none" })
+        .register("./sw.js?v=16", { updateViaCache: "none" })
         .then((registration) => registration.update())
         .catch(() => {
           // file:// and non-secure origins do not support service workers.
