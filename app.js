@@ -414,7 +414,7 @@
 
     return {
       waitingOn,
-      title: title || "催办",
+      title: title || "待跟进",
       dateResult
     };
   }
@@ -636,7 +636,7 @@
     }
     list.appendChild(taskBlock);
 
-    const followUpBlock = createTodayBlock("今日待催");
+    const followUpBlock = createTodayBlock("今日待跟进");
     if (followUps.length) {
       const grouped = groupByWaitingOn(followUps);
       Object.keys(grouped).forEach((waitingOn) => {
@@ -649,7 +649,7 @@
         });
       });
     } else {
-      followUpBlock.appendChild(createInlineEmpty("暂无待催"));
+      followUpBlock.appendChild(createInlineEmpty("暂无待跟进"));
     }
     list.appendChild(followUpBlock);
   }
@@ -1098,7 +1098,7 @@
       .sort(compareReminderItems);
 
     if (!followUps.length) {
-      showInPageReminder("今天没有未处理待催。");
+      showInPageReminder("今天没有未处理待跟进事项。");
       return;
     }
 
@@ -1114,10 +1114,10 @@
 
     try {
       await navigator.clipboard.writeText(text);
-      showInPageReminder("今日待催已复制。");
+      showInPageReminder("今日待跟进事项已复制。");
     } catch {
       fallbackCopyText(text);
-      showInPageReminder("今日待催已复制。");
+      showInPageReminder("今日待跟进事项已复制。");
     }
   }
 
