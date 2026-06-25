@@ -722,8 +722,8 @@
     date.dateTime = getItemAt(item) || getItemDateKey(item);
 
     const dueDate = fromDateKey(getItemDateKey(item));
-    if (state.done && state.completedAt) {
-      status.textContent = formatCompletedAt(state.completedAt);
+    if (state.done) {
+      status.textContent = "已完成";
     } else if (dueDate < startOfToday() && !state.done) {
       status.textContent = "· 已逾期";
       status.classList.add("overdue");
@@ -733,6 +733,8 @@
     checkbox.addEventListener("change", () => {
       const timestamp = new Date().toISOString();
       const previousState = taskStates[item.id];
+      // completedAt is the timestamp when the user marked the task done,
+      // not a verified timestamp for when the work actually finished.
       const nextState = {
         done: checkbox.checked,
         updatedAt: timestamp,
@@ -783,12 +785,13 @@
 
     if (!target) return;
 
-    window.requestAnimationFrame(() => {
+    target.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+
+    waitForNextPaint(() => {
       const range = findSourceLineRange(target.value, item);
-      target.focus();
-      target.setSelectionRange(range.end, range.end);
-      scrollTextareaToLine(target, range.lineIndex);
-      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      target.focus({ preventScroll: true });
+      target.setSelectionRange(range.start, range.start);
+      scrollTextareaToRange(target, range);
     });
   }
 
@@ -824,14 +827,76 @@
     };
   }
 
-  function scrollTextareaToLine(textarea, lineIndex) {
-    const lineHeight = Number.parseFloat(
-      window.getComputedStyle(textarea).lineHeight
-    ) || 24;
-    textarea.scrollTop = Math.max(
-      0,
-      lineIndex * lineHeight - textarea.clientHeight / 2
-    );
+  function waitForNextPaint(callback) {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(callback);
+    });
+  }
+
+  function scrollTextareaToRange(textarea, range) {
+    const metrics = getTextareaRangeMetrics(textarea, range);
+    if (!metrics) return;
+
+    const targetTop = metrics.top - (textarea.clientHeight - metrics.height) / 2;
+    const maxScrollTop = Math.max(0, textarea.scrollHeight - textarea.clientHeight);
+    textarea.scrollTop = Math.min(Math.max(0, targetTop), maxScrollTop);
+  }
+
+  function getTextareaRangeMetrics(textarea, range) {
+    const style = window.getComputedStyle(textarea);
+    const mirror = document.createElement("div");
+    const marker = document.createElement("span");
+    const copiedProperties = [
+      "boxSizing",
+      "width",
+      "paddingTop",
+      "paddingRight",
+      "paddingBottom",
+      "paddingLeft",
+      "borderTopWidth",
+      "borderRightWidth",
+      "borderBottomWidth",
+      "borderLeftWidth",
+      "fontFamily",
+      "fontSize",
+      "fontWeight",
+      "fontStyle",
+      "fontVariant",
+      "lineHeight",
+      "letterSpacing",
+      "textTransform",
+      "textIndent",
+      "textAlign",
+      "tabSize",
+      "wordBreak",
+      "overflowWrap"
+    ];
+
+    copiedProperties.forEach((property) => {
+      mirror.style[property] = style[property];
+    });
+    mirror.style.position = "absolute";
+    mirror.style.visibility = "hidden";
+    mirror.style.left = "-9999px";
+    mirror.style.top = "0";
+    mirror.style.height = "auto";
+    mirror.style.minHeight = "0";
+    mirror.style.overflow = "hidden";
+    mirror.style.whiteSpace = "pre-wrap";
+    mirror.style.width = `${textarea.offsetWidth}px`;
+
+    marker.textContent = textarea.value.slice(range.start, range.end) || "\u200b";
+    mirror.textContent = textarea.value.slice(0, range.start);
+    mirror.appendChild(marker);
+    document.body.appendChild(mirror);
+
+    const metrics = {
+      top: marker.offsetTop,
+      height: marker.offsetHeight || Number.parseFloat(style.lineHeight) || 24
+    };
+    mirror.remove();
+
+    return metrics;
   }
 
   function getDateGroup(item) {
@@ -1627,24 +1692,6 @@
     return `${formatCompactDate(date)} · ${item.dateLabel}`;
   }
 
-  function formatCompletedAt(value) {
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "已处理";
-
-    const time = `${String(date.getHours()).padStart(2, "0")}:${String(
-      date.getMinutes()
-    ).padStart(2, "0")}`;
-
-    if (startOfDay(date).getTime() === startOfToday().getTime()) {
-      return `处理于 ${time}`;
-    }
-
-    return `处理于 ${date.getMonth() + 1}.${String(date.getDate()).padStart(
-      2,
-      "0"
-    )} ${time}`;
-  }
-
   function getSortTime(item) {
     const itemAt = getItemAt(item);
     if (itemAt) {
@@ -1669,7 +1716,7 @@
 
     window.addEventListener("load", () => {
       navigator.serviceWorker
-        .register("./sw.js?v=17", { updateViaCache: "none" })
+        .register("./sw.js?v=18", { updateViaCache: "none" })
         .then((registration) => registration.update())
         .catch(() => {
           // file:// and non-secure origins do not support service workers.

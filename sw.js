@@ -1,9 +1,9 @@
-const CACHE_NAME = "work-note-v17";
+const CACHE_NAME = "work-note-v18";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./style.css?v=15",
-  "./app.js?v=17",
+  "./app.js?v=18",
   "./manifest.json",
   "./icons/icon.svg",
   "./icons/icon-192.png",
