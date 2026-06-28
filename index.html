@@ -8,14 +8,14 @@
     <title>工作便签本</title>
     <link rel="manifest" href="manifest.json">
     <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=15">
+    <link rel="stylesheet" href="style.css?v=20">
   </head>
   <body>
     <main class="workspace">
       <section class="note-pane" aria-labelledby="appTitle">
         <header class="note-header">
           <div>
-            <h1 id="appTitle">工作便签本</h1>
+            <h1 id="appTitle" class="sr-only">工作便签本</h1>
             <p id="todayText"></p>
           </div>
           <div class="note-actions">
@@ -24,26 +24,34 @@
           </div>
         </header>
 
-        <textarea
-          id="workspaceNote"
-          aria-label="本周工作随记"
-          placeholder="写下工作内容。日期会被自动识别，例如：明天下午开会"
-          autofocus
-          spellcheck="false"
-        ></textarea>
-
-        <details class="long-term-panel">
-          <summary>
-            <span>长线事项备忘</span>
-            <span>常驻</span>
-          </summary>
+        <div class="note-scroll">
           <textarea
-            id="longTermNote"
-            aria-label="长线事项备忘"
-            placeholder="记录跨周任务、长期计划和后续安排等信息"
+            id="workspaceNote"
+            aria-label="本周工作随记"
+            placeholder="直接记录或粘贴，例如：
+
+项目A：
+明天 完成方案
+> 小王 周五 确认反馈
+// 这行只作备注"
+            autofocus
             spellcheck="false"
           ></textarea>
-        </details>
+
+          <details class="long-term-panel">
+            <summary>
+              <span>长线事项备忘</span>
+              <span>常驻</span>
+            </summary>
+            <textarea
+              id="longTermNote"
+              aria-label="长线事项备忘"
+              placeholder="记录跨周或较远日期的事项，也会进入提醒"
+              spellcheck="false"
+            ></textarea>
+          </details>
+
+        </div>
 
         <footer class="note-footer">
           <span id="weekLabel"></span>
@@ -69,29 +77,31 @@
           </div>
         </header>
 
-        <details class="ddl-group" open>
-          <summary>
-            <span>今日</span>
-            <span id="todayCount">0</span>
-          </summary>
-          <div id="todayList" class="ddl-list"></div>
-        </details>
+        <div class="ddl-scroll">
+          <details class="ddl-group" open>
+            <summary>
+              <span>今日</span>
+              <span id="todayCount">0</span>
+            </summary>
+            <div id="todayList" class="ddl-list"></div>
+          </details>
 
-        <details class="ddl-group">
-          <summary>
-            <span>本周</span>
-            <span id="weekCount">0</span>
-          </summary>
-          <div id="weekList" class="ddl-list"></div>
-        </details>
+          <details class="ddl-group">
+            <summary>
+              <span>本周</span>
+              <span id="weekCount">0</span>
+            </summary>
+            <div id="weekList" class="ddl-list"></div>
+          </details>
 
-        <details class="ddl-group">
-          <summary>
-            <span>未来</span>
-            <span id="futureCount">0</span>
-          </summary>
-          <div id="futureList" class="ddl-list"></div>
-        </details>
+          <details class="ddl-group">
+            <summary>
+              <span>未来</span>
+              <span id="futureCount">0</span>
+            </summary>
+            <div id="futureList" class="ddl-list"></div>
+          </details>
+        </div>
       </aside>
     </main>
 
@@ -143,6 +153,7 @@
             <span class="ddl-status"></span>
           </span>
         </span>
+        <button class="copy-done-btn" type="button">复制</button>
       </label>
     </template>
 
@@ -150,6 +161,6 @@
       <p class="empty-state">暂无提醒</p>
     </template>
 
-    <script src="app.js?v=18"></script>
+    <script src="app.js?v=23"></script>
   </body>
 </html>

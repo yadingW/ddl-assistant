@@ -7,6 +7,7 @@
   const LONG_TERM_EXTRACTED_KEY = `${EXTRACTED_PREFIX}long_term`;
   const TASK_STATE_KEY = "workspace_task_states";
   const PARSER_VERSION_KEY = "workspace_parser_version";
+  const LEGACY_LAYOUT_RATIO_KEY = "workspace_layout_ratio";
   const PARSER_VERSION = "9";
   const LEGACY_TASK_KEY = "ddl-assistant.tasks.v1";
   const EXTRACT_DELAY = 320;
@@ -568,15 +569,17 @@
         grouped[getDateGroup(item)].push(item);
       });
 
+    const activeCount = grouped.today.length + grouped.week.length + grouped.future.length;
+    const emptyState = activeCount ? null : getReminderEmptyState();
+
     ["today", "week", "future"].forEach((groupName) => {
-      renderGroup(groupName, grouped[groupName]);
+      renderGroup(groupName, grouped[groupName], emptyState);
       counts[groupName].textContent = String(grouped[groupName].length);
     });
     renderArchiveGroup(grouped.archive);
 
-    counts.total.textContent = String(
-      grouped.today.length + grouped.week.length + grouped.future.length
-    );
+    counts.total.textContent = String(activeCount);
+    updateReminderSummary(activeCount);
     checkDueReminders();
   }
 
@@ -600,12 +603,12 @@
     return Array.from(itemMap.values());
   }
 
-  function renderGroup(groupName, items) {
+  function renderGroup(groupName, items, emptyState) {
     const list = lists[groupName];
     list.replaceChildren();
 
     if (groupName === "today") {
-      renderTodayGroup(list, items);
+      renderTodayGroup(list, items, emptyState);
       return;
     }
 
@@ -619,12 +622,12 @@
     });
   }
 
-  function renderTodayGroup(list, items) {
+  function renderTodayGroup(list, items, emptyState) {
     const tasks = items.filter((item) => !isFollowUp(item));
     const followUps = items.filter(isFollowUp);
 
     if (!tasks.length && !followUps.length) {
-      list.appendChild(document.getElementById("emptyTemplate").content.cloneNode(true));
+      list.appendChild(createReminderEmptyState(emptyState));
       return;
     }
 
@@ -671,6 +674,70 @@
     return empty;
   }
 
+  function createReminderEmptyState(state) {
+    if (!state) {
+      return document.getElementById("emptyTemplate").content.cloneNode(true);
+    }
+
+    const wrapper = document.createElement("div");
+    const title = document.createElement("p");
+    const detail = document.createElement("p");
+    const example = document.createElement("p");
+
+    wrapper.className = "empty-state empty-state-guide";
+    title.className = "empty-title";
+    detail.className = "empty-detail";
+    example.className = "empty-example";
+    title.textContent = state.title;
+    detail.textContent = state.detail;
+    example.textContent = state.example;
+    wrapper.append(title, detail, example);
+    return wrapper;
+  }
+
+  function getReminderEmptyState() {
+    if (hasAnyReminderSourceText()) {
+      return {
+        title: "暂未识别到日期节点",
+        detail: "给事项加上日期，它就会出现在提醒中。",
+        example: "例如：明天 整理会议材料"
+      };
+    }
+
+    return {
+      title: "还没有日期提醒",
+      detail: "直接记录工作安排，带日期的事项会自动出现在这里。",
+      example: "例如：明天 整理会议材料"
+    };
+  }
+
+  function hasAnyReminderSourceText() {
+    if (hasNonBlankText(noteInput.value) || hasNonBlankText(longTermInput.value)) {
+      return true;
+    }
+
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (!key || !key.startsWith(NOTE_PREFIX)) continue;
+      if (hasNonBlankText(window.localStorage.getItem(key) || "")) return true;
+    }
+
+    return false;
+  }
+
+  function hasNonBlankText(text) {
+    return /\S/.test(String(text || ""));
+  }
+
+  function updateReminderSummary(activeCount) {
+    const summary = document.querySelector(".sidebar-header p");
+    if (!summary) return;
+
+    summary.textContent = activeCount
+      ? `已识别 ${activeCount} 个日期节点`
+      : "从随记中静默提取";
+  }
+
   function groupByWaitingOn(items) {
     return items.reduce((result, item) => {
       const key = item.waitingOn || "未指定对象";
@@ -684,13 +751,25 @@
     const sidebar = document.querySelector(".ddl-sidebar");
     const wrapper = document.createElement("section");
     const button = document.createElement("button");
-    const list = document.createElement("div");
+    const actions = document.createElement("div");
+    const copyThisWeekButton = document.createElement("button");
 
     wrapper.className = "archive-panel";
     button.className = "archive-toggle";
     button.type = "button";
     button.addEventListener("click", openArchiveDrawer);
-    wrapper.append(button);
+    actions.className = "archive-quick-actions";
+    copyThisWeekButton.className = "text-button";
+    copyThisWeekButton.type = "button";
+    copyThisWeekButton.textContent = "复制本周已完成";
+    copyThisWeekButton.setAttribute("aria-label", "复制本周已完成事项");
+    copyThisWeekButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      copyCompletedWeek("this");
+    });
+    actions.append(copyThisWeekButton);
+    wrapper.append(button, actions);
     sidebar.appendChild(wrapper);
 
     return { wrapper, button };
@@ -699,6 +778,10 @@
   function renderArchiveGroup(items) {
     archiveItems = items;
     archiveView.button.textContent = `查看历史已完成 (${items.length})`;
+    archiveView.button.setAttribute(
+      "aria-label",
+      `查看历史已完成，共 ${items.length} 条`
+    );
     archiveView.button.disabled = items.length === 0;
     archiveView.wrapper.classList.toggle("has-items", items.length > 0);
     if (archiveDrawer.classList.contains("open")) {
@@ -714,6 +797,7 @@
     const title = fragment.querySelector(".ddl-title");
     const date = fragment.querySelector(".ddl-date");
     const status = fragment.querySelector(".ddl-status");
+    const copyDoneBtn = fragment.querySelector(".copy-done-btn");
     const state = taskStates[item.id] || { done: false };
 
     checkbox.checked = Boolean(state.done);
@@ -730,6 +814,21 @@
     }
 
     label.classList.toggle("done", Boolean(state.done));
+    if (state.done) {
+      copyDoneBtn.setAttribute("aria-label", `复制已完成事项：${normalizeReminderTitle(item)}`);
+      copyDoneBtn.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        copyTextWithToast(
+          formatSingleCompletedItem(item),
+          "已完成事项已复制。",
+          "复制失败，请手动复制。"
+        );
+      });
+    } else {
+      copyDoneBtn.remove();
+    }
+
     checkbox.addEventListener("change", () => {
       const timestamp = new Date().toISOString();
       const previousState = taskStates[item.id];
@@ -991,14 +1090,38 @@
     const grouped = groupArchiveItems(archiveItems);
     ["本周", "上周", "更早周次"].forEach((label) => {
       if (!grouped[label].length) return;
-      const heading = document.createElement("div");
-      heading.className = "today-subheading";
-      heading.textContent = label;
+      const heading = createArchiveGroupHeading(label);
       archiveDrawerList.appendChild(heading);
       grouped[label].forEach((item) => {
         archiveDrawerList.appendChild(createReminderElement(item));
       });
     });
+  }
+
+  function createArchiveGroupHeading(label) {
+    const heading = document.createElement("div");
+    const title = document.createElement("span");
+
+    heading.className = "archive-group-heading today-subheading";
+    title.textContent = label;
+    heading.appendChild(title);
+
+    if (label === "本周" || label === "上周") {
+      const button = document.createElement("button");
+      const target = label === "本周" ? "this" : "last";
+      button.className = "text-button archive-copy-button";
+      button.type = "button";
+      button.textContent = label === "本周" ? "复制本周" : "复制上周";
+      button.setAttribute("aria-label", `复制${label}已完成事项`);
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        copyCompletedWeek(target);
+      });
+      heading.appendChild(button);
+    }
+
+    return heading;
   }
 
   function groupArchiveItems(items) {
@@ -1097,7 +1220,7 @@
 
     for (let index = 0; index < window.localStorage.length; index += 1) {
       const key = window.localStorage.key(index);
-      if (key && key.startsWith("workspace_")) {
+      if (key && key.startsWith("workspace_") && key !== LEGACY_LAYOUT_RATIO_KEY) {
         backup[key] = window.localStorage.getItem(key);
       }
     }
@@ -1178,11 +1301,136 @@
       .join("\n\n");
 
     try {
-      await navigator.clipboard.writeText(text);
-      showInPageReminder("今日待跟进事项已复制。");
+      await copyTextWithToast(
+        text,
+        "今日待跟进事项已复制。",
+        "复制失败，请手动复制。"
+      );
     } catch {
-      fallbackCopyText(text);
-      showInPageReminder("今日待跟进事项已复制。");
+      showInPageReminder("复制失败，请手动复制。");
+    }
+  }
+
+  async function copyCompletedWeek(target) {
+    const week = getCompletedCopyWeek(target);
+    const items = collectCompletedItemsForWeek(week.start, week.end);
+
+    if (!items.length) {
+      showInPageReminder(`${week.label}暂无已完成事项。`);
+      return;
+    }
+
+    const text = formatCompletedWeekText(week.label, items);
+    await copyTextWithToast(
+      text,
+      `${week.label}已完成事项已复制。`,
+      "复制失败，请手动复制。"
+    );
+  }
+
+  function getCompletedCopyWeek(target) {
+    const thisWeekStart = startOfIsoWeek(startOfToday());
+    const start = target === "last" ? addDays(thisWeekStart, -7) : thisWeekStart;
+
+    return {
+      label: target === "last" ? "上周" : "本周",
+      start,
+      end: addDays(start, 6)
+    };
+  }
+
+  function collectCompletedItemsForWeek(start, end) {
+    return loadAllExtractedItems()
+      .filter((item) => {
+        const state = taskStates[item.id];
+        if (!state || !state.done) return false;
+
+        const date = getPlannedDate(item);
+        return date >= start && date <= end;
+      })
+      .sort(compareCompletedCopyItems);
+  }
+
+  function compareCompletedCopyItems(a, b) {
+    const dateOrder = getPlannedDate(a) - getPlannedDate(b);
+    if (dateOrder) return dateOrder;
+
+    const projectOrder = getProjectName(a).localeCompare(getProjectName(b), "zh-CN");
+    if (projectOrder) return projectOrder;
+
+    return getTitleWithoutProject(a).localeCompare(getTitleWithoutProject(b), "zh-CN");
+  }
+
+  function formatCompletedWeekText(label, items) {
+    const grouped = groupCompletedItemsByProject(items);
+    const sections = [`${label}已完成`];
+
+    grouped.forEach((group) => {
+      sections.push(
+        `${group.project}\n${group.items
+          .map((item) => `• ${formatCopyDate(item)} ${getTitleWithoutProject(item)}`)
+          .join("\n")}`
+      );
+    });
+
+    return sections.join("\n\n");
+  }
+
+  function groupCompletedItemsByProject(items) {
+    const groups = new Map();
+
+    items.forEach((item) => {
+      const project = getProjectName(item) || "其他事项";
+      if (!groups.has(project)) {
+        groups.set(project, []);
+      }
+      groups.get(project).push(item);
+    });
+
+    return Array.from(groups.entries()).map(([project, groupItems]) => ({
+      project,
+      items: groupItems
+    }));
+  }
+
+  function formatSingleCompletedItem(item) {
+    return `${normalizeReminderTitle(item)}（${formatCopyDate(item)}）`;
+  }
+
+  function formatCopyDate(item) {
+    const date = getPlannedDate(item);
+    return `${date.getMonth() + 1}.${String(date.getDate()).padStart(2, "0")}`;
+  }
+
+  function getPlannedDate(item) {
+    return fromDateKey(getItemDateKey(item));
+  }
+
+  function getProjectName(item) {
+    if (item.contextPrefix) return normalizePrefix(item.contextPrefix);
+
+    const match = normalizeReminderTitle(item).match(/^\[([^\]]+)\]/);
+    return match ? normalizePrefix(match[1]) : "";
+  }
+
+  function getTitleWithoutProject(item) {
+    return normalizeReminderTitle(item)
+      .replace(/^\[[^\]]+\]\s*/, "")
+      .trim();
+  }
+
+  async function copyTextWithToast(text, successMessage, failureMessage) {
+    try {
+      await navigator.clipboard.writeText(text);
+      showInPageReminder(successMessage);
+      return true;
+    } catch {
+      if (fallbackCopyText(text)) {
+        showInPageReminder(successMessage);
+        return true;
+      }
+      showInPageReminder(failureMessage);
+      return false;
     }
   }
 
@@ -1194,8 +1442,9 @@
     textarea.style.opacity = "0";
     document.body.appendChild(textarea);
     textarea.select();
-    document.execCommand("copy");
+    const copied = document.execCommand("copy");
     textarea.remove();
+    return copied;
   }
 
   async function requestReminderPermission() {
@@ -1350,7 +1599,9 @@
       throw new Error("invalid backup root");
     }
 
-    return Object.entries(backup).map(([key, value]) => {
+    return Object.entries(backup)
+      .filter(([key]) => key !== LEGACY_LAYOUT_RATIO_KEY)
+      .map(([key, value]) => {
       if (!isAllowedBackupKey(key) || typeof value !== "string") {
         throw new Error("invalid backup entry");
       }
@@ -1716,7 +1967,7 @@
 
     window.addEventListener("load", () => {
       navigator.serviceWorker
-        .register("./sw.js?v=18", { updateViaCache: "none" })
+        .register("./sw.js?v=23", { updateViaCache: "none" })
         .then((registration) => registration.update())
         .catch(() => {
           // file:// and non-secure origins do not support service workers.
